@@ -1,0 +1,9 @@
+node_modules/
+dist/
+packages/*/dev/dist/
+coverage/
+*.log
+.DS_Store
+.tmp/
+test-results/
+playwright-report/

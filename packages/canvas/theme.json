@@ -1,0 +1,11 @@
+{
+  "id": "canvas",
+  "name": "Canvas",
+  "version": "0.1.0",
+  "description": "Every live session as a window on an infinite, pannable canvas. Drag them anywhere; the layout follows you across devices.",
+  "entry": "dist/index.js",
+  "style": "dist/index.css",
+  "icon": "<svg viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.5\"><rect x=\"3\" y=\"4\" width=\"11\" height=\"8\" rx=\"1\"/><rect x=\"10\" y=\"12\" width=\"11\" height=\"8\" rx=\"1\"/><path d=\"M3 8h11M10 16h11\"/></svg>",
+  "experimental": true,
+  "api": 1
+}

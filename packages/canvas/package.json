@@ -1,0 +1,21 @@
+{
+  "name": "@sessionpipe-gui/theme-canvas",
+  "version": "0.1.0",
+  "description": "Every live session as a draggable window on an infinite canvas. A sessionpipe GUI theme.",
+  "license": "Apache-2.0",
+  "type": "module",
+  "files": [
+    "dist",
+    "theme.json",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "dev": "node scripts/dev.mjs",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "playwright test"
+  },
+  "devDependencies": {
+    "@sessionpipe-gui/theme-types": "0.1.0"
+  }
+}
