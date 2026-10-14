@@ -9,7 +9,7 @@ import the types without depending on the GUI package:
 **This mirrors `shared/theme-api.ts` and `shared/api.ts` in the GUI repo and must be kept in
 sync by hand.** The GUI is the source of truth; copy, never edit here.
 
-Mirrors GUI commit `db1e0f2b040897029bef1257575b7ffb280924ae` (`Theme plugin contract`).
+Mirrors GUI commit `4d8748eb040897029bef1257575b7ffb280924ae` (`Theme plugin contract`).
 
 To refresh:
 

@@ -1,0 +1,1088 @@
+/* SPDX-License-Identifier: Apache-2.0 */
+/* The office, in two styles (DESIGN.md §1–§13). Neutrals everywhere; amber only on a
+   needs_you lamp or ring and its bubble; a lit screen is the one other strong value. The
+   scene is laid out in logical px and scaled by --o-scale, which zooms the drawings but
+   never the nameplate text. All motion lives in the no-preference block at the end.
+
+   Every selector is scoped under .sp-office: the host links this sheet into the whole
+   page. Colours are the host's tokens (var(--bg), var(--fg), var(--needs), …); the
+   scheme-dependent values read [data-scheme] on the root, which the snapshot provides. */
+
+/* ---------- frame: the host's full-bleed container, so the page scrolls here ---------- */
+
+.sp-office {
+  height: 100%;
+  overflow: auto;
+  color: var(--fg);
+  font-family: var(--font-ui);
+  font-size: var(--text-md);
+  line-height: 1.45;
+}
+.sp-office .office {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  width: 100%;
+  max-width: var(--max, 1480px);
+  margin: 0 auto;
+  padding: 12px var(--gutter, 16px) calc(var(--tabbar, 56px) + env(safe-area-inset-bottom) + 24px);
+}
+@media (min-width: 840px) {
+  .sp-office .office {
+    padding: 20px var(--gutter, 24px) 48px;
+  }
+}
+.sp-office a {
+  color: inherit;
+  text-decoration: none;
+}
+.sp-office button,
+.sp-office input {
+  font: inherit;
+  color: inherit;
+}
+.sp-office button {
+  background: none;
+  border: 0;
+  padding: 0;
+  cursor: pointer;
+  touch-action: manipulation;
+}
+.sp-office code,
+.sp-office .mono {
+  font-family: var(--font-mono);
+  font-size: 0.875em;
+}
+.sp-office .num {
+  font-variant-numeric: tabular-nums;
+}
+.sp-office .sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+.sp-office .page-note {
+  color: var(--fg-3);
+  font-size: var(--text-sm);
+}
+.sp-office .btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-height: 32px;
+  padding: 0 12px;
+  border-radius: var(--radius);
+  border: 1px solid var(--line-2);
+  background: transparent;
+  color: var(--fg);
+  font-size: var(--text-sm);
+  font-weight: 500;
+  white-space: nowrap;
+}
+.sp-office .btn--primary {
+  background: var(--fg);
+  color: var(--bg);
+  border-color: var(--fg);
+}
+.sp-office .btn--primary:hover {
+  background: var(--fg-2);
+  border-color: var(--fg-2);
+}
+.sp-office .seg {
+  display: inline-flex;
+  margin: 0;
+  border: 1px solid var(--line);
+  padding: 2px;
+  border-radius: var(--radius);
+  gap: 2px;
+}
+.sp-office .seg-opt {
+  display: inline-grid;
+  place-items: center;
+  min-width: 28px;
+  height: 22px;
+  padding: 0 6px;
+  border-radius: 4px;
+  font-size: var(--text-xs);
+  font-weight: 500;
+  color: var(--fg-3);
+  font-variant-numeric: tabular-nums;
+  cursor: pointer;
+}
+.sp-office .seg-opt:hover {
+  color: var(--fg);
+}
+.sp-office .seg-opt:focus-within {
+  outline: 2px solid var(--focus);
+}
+.sp-office .seg .seg-on {
+  background: var(--bg-3);
+  color: var(--fg);
+}
+
+/* ---------- page ---------- */
+
+.sp-office .office-head {
+  position: relative;
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.sp-office .office-title {
+  font-family: var(--font-display);
+  font-size: var(--text-lg);
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+.sp-office .office-xp {
+  color: var(--fg-4);
+  font-size: var(--text-xs);
+}
+.sp-office .office-sum {
+  color: var(--fg-3);
+  font-size: var(--text-sm);
+}
+.sp-office .office-tools {
+  margin-left: auto;
+  align-self: center;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.sp-office .office-defs {
+  position: absolute;
+  width: 0;
+  height: 0;
+}
+.sp-office .rooms {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: 26px 24px;
+}
+
+/* ---------- room ---------- */
+
+.sp-office .room {
+  --o-scale: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-width: 100%;
+}
+@media (min-width: 1024px) {
+  .sp-office .room {
+    --o-scale: 1.25;
+  }
+}
+@media (min-width: 1700px) {
+  .sp-office .room {
+    --o-scale: 1.4;
+  }
+}
+.sp-office .room-plate {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 4px 10px;
+  padding: 0 2px;
+  min-height: 20px;
+}
+.sp-office .room-name {
+  font-family: var(--font-display);
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--fg);
+}
+.sp-office .room-pair,
+.sp-office .room-clock-text {
+  font-size: 11px;
+  color: var(--fg-3);
+}
+.sp-office .room-pair b {
+  font-weight: 600;
+  color: var(--fg-3);
+}
+.sp-office .room-dot {
+  align-self: center;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  border: 1px solid var(--fg-4);
+}
+.sp-office .room-dot--on {
+  background: var(--ok);
+  border-color: var(--ok);
+}
+.sp-office .room-more {
+  font-size: 11px;
+  color: var(--fg-3);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.sp-office .room-box {
+  position: relative;
+  width: calc(var(--room-w) * var(--o-scale));
+  max-width: 100%;
+  border: 1px solid var(--line-2);
+  background: var(--bg-2);
+  --o-top: var(--bg-4);
+  --o-edge: var(--line-2);
+  --o-wood: var(--fg-4);
+  --o-chair: var(--fg-4);
+  --o-sheet: var(--bg-2);
+  --o-needs: var(--needs);
+  --o-leaf: oklch(0.6 0.06 150);
+  --look-hair: oklch(0.28 0.02 60);
+  --look-trouser: var(--fg-3);
+  --pl-head: var(--fg-2);
+  --pl-arc: var(--fg-3);
+  --pl-chair: var(--fg-4);
+}
+.sp-office .room-floor {
+  position: relative;
+  height: calc(var(--floor-h) * var(--o-scale));
+}
+/* window: figures, a band across the back wall; plan, a line in the top wall */
+.sp-office .room-box--figures .room-window {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 0;
+  height: 6px;
+  background: color-mix(in oklch, var(--bg-4) 80%, var(--o-window) 20%);
+  transition: background-color 60s linear;
+}
+.sp-office .room-box--plan .room-window {
+  position: absolute;
+  left: 12px;
+  top: -1px;
+  width: 60%;
+  height: 4px;
+  background: color-mix(in oklch, var(--line-2) 55%, var(--o-window) 45%);
+  transition: background-color 60s linear;
+}
+.sp-office .room-clock {
+  position: absolute;
+  right: 6px;
+  top: 6px;
+}
+.sp-office .clock-hand {
+  stroke: var(--fg-2);
+  stroke-width: 1;
+  stroke-linecap: round;
+}
+.sp-office .room-plant {
+  position: absolute;
+  right: 6px;
+  bottom: 6px;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--o-leaf);
+}
+/* door: a break in the front wall, jambs 2 px; the plan adds the swing arc */
+.sp-office .room-door {
+  position: absolute;
+  left: 16px;
+  bottom: -1px;
+  width: 18px;
+  height: 1px;
+  background: var(--bg);
+}
+.sp-office .room-door::before,
+.sp-office .room-door::after {
+  content: "";
+  position: absolute;
+  top: -1px;
+  width: 2px;
+  height: 4px;
+  background: var(--line-2);
+}
+.sp-office .room-door::before {
+  left: -2px;
+}
+.sp-office .room-door::after {
+  right: -2px;
+}
+.sp-office .room-door-arc {
+  position: absolute;
+  left: 16px;
+  bottom: 0;
+}
+.sp-office .room-home {
+  position: absolute;
+  left: 42px;
+  top: 100%;
+  margin-top: -8px;
+  padding: 0 4px;
+  background: var(--bg);
+  font-size: 11px;
+  line-height: 16px;
+  color: var(--fg-3);
+  white-space: nowrap;
+}
+
+/* the window tint, by the viewer's hour */
+.sp-office .window--morning {
+  --o-window: oklch(0.8 0.06 230);
+}
+.sp-office .window--day {
+  --o-window: oklch(0.85 0.06 85);
+}
+.sp-office .window--evening {
+  --o-window: oklch(0.75 0.1 60);
+}
+.sp-office .window--night {
+  --o-window: oklch(0.4 0.06 250);
+}
+
+/* ---------- looks (figures): two neutrals and one muted hue, two skin tones ---------- */
+
+.sp-office .look-s0 {
+  --look-shirt: oklch(0.55 0 0);
+}
+.sp-office .look-s1 {
+  --look-shirt: oklch(0.55 0.012 80);
+}
+.sp-office .look-s2 {
+  --look-shirt: oklch(0.55 0.06 220);
+}
+.sp-office .look-k0 {
+  --look-skin: oklch(0.82 0.05 60);
+}
+.sp-office .look-k1 {
+  --look-skin: oklch(0.5 0.06 50);
+}
+.sp-office[data-scheme="dark"] .look-s0 {
+  --look-shirt: oklch(0.65 0 0);
+}
+.sp-office[data-scheme="dark"] .look-s1 {
+  --look-shirt: oklch(0.65 0.012 80);
+}
+.sp-office[data-scheme="dark"] .look-s2 {
+  --look-shirt: oklch(0.65 0.06 220);
+}
+/* ---------- cell (both styles) ---------- */
+
+.sp-office .cell {
+  position: absolute;
+  left: calc(var(--left) * var(--o-scale));
+  bottom: calc(var(--bottom) * var(--o-scale));
+  width: calc(160px * var(--o-scale));
+  height: calc(var(--ch) * var(--o-scale));
+}
+.sp-office .cell--figures {
+  --ch: 120px;
+  --plate-y: 74px;
+}
+.sp-office .cell--plan {
+  --ch: 108px;
+  --plate-y: 80px;
+}
+.sp-office .cell--arriving,
+.sp-office .cell--leaving {
+  z-index: 3;
+}
+.sp-office .cell--needs_you {
+  z-index: 2;
+}
+.sp-office .cell-link {
+  position: relative;
+  display: block;
+  width: 100%;
+  height: 100%;
+  border-radius: 6px;
+}
+.sp-office .cell-link:focus-visible,
+.sp-office .cell[data-cursor] .cell-link {
+  outline: 2px solid var(--focus);
+  outline-offset: 0;
+}
+.sp-office .cell-art {
+  display: block;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+}
+.sp-office .legend-art,
+.sp-office .helper-art {
+  display: block;
+  overflow: visible;
+}
+
+/* the two-line nameplate, unscaled text under the chair */
+.sp-office .cell-plate {
+  position: absolute;
+  left: 4px;
+  top: calc(var(--plate-y) * var(--o-scale));
+  max-width: 152px;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  line-height: 12px;
+}
+.sp-office .plate-row {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  max-width: 152px;
+}
+.sp-office .plate-title {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 1;
+  overflow: hidden;
+  min-width: 0;
+  font-size: 11px;
+  color: var(--fg);
+}
+.sp-office .plate-title--two {
+  -webkit-line-clamp: 2;
+}
+.sp-office .plate-elapsed {
+  flex: none;
+  font-family: var(--font-mono);
+  font-size: 9px;
+  color: var(--fg-3);
+}
+.sp-office .plate-repo {
+  display: block;
+  max-width: 152px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--fg-3);
+}
+.sp-office .cell--gone .plate-title,
+.sp-office .cell--gone .plate-repo {
+  color: var(--fg-4);
+}
+
+/* the attention bubble: --needs-bg fill, --fg text, no border */
+.sp-office .cell-bubble {
+  position: absolute;
+  left: calc(var(--bx, 60px) * var(--o-scale));
+  top: calc(var(--by, 30px) * var(--o-scale));
+  height: 14px;
+  padding: 0 6px;
+  border-radius: 7px;
+  background: var(--needs-bg);
+  color: var(--fg);
+  font-size: 9px;
+  line-height: 14px;
+  white-space: nowrap;
+  transform-origin: 12px 100%;
+}
+.sp-office .cell-bubble::after {
+  content: "";
+  position: absolute;
+  left: 9px;
+  bottom: -3px;
+  width: 5px;
+  height: 5px;
+  background: var(--needs-bg);
+  transform: rotate(45deg);
+}
+
+/* helpers: a link over the side table (figures) or a seat at the round table (plan) */
+.sp-office .cell-helper {
+  position: absolute;
+  left: calc(var(--hx) * var(--o-scale));
+  top: calc(24px * var(--o-scale));
+  width: calc(48px * var(--o-scale));
+  height: calc(56px * var(--o-scale));
+  border-radius: 4px;
+}
+.sp-office .cell-helper--plan {
+  top: calc(var(--hy) * var(--o-scale));
+  width: calc(24px * var(--o-scale));
+  height: calc(20px * var(--o-scale));
+}
+.sp-office .helper-art {
+  width: 100%;
+  height: 100%;
+}
+.sp-office .cell-helper:focus-visible,
+.sp-office .cell-helper[data-cursor] {
+  outline: 2px solid var(--focus);
+  outline-offset: 0;
+}
+.sp-office .cell-helper + .cell-helper {
+  pointer-events: none;
+}
+.sp-office .cell-helper--plan + .cell-helper--plan {
+  pointer-events: auto;
+}
+
+/* ---------- figures: facts on the desk ---------- */
+
+.sp-office .cell-screen {
+  transition: fill 120ms linear;
+}
+.sp-office .cell-screen--lit {
+  fill: var(--fg-2);
+}
+.sp-office .cell-screen--dim {
+  fill: var(--bg-3);
+}
+.sp-office .cell-screen--off,
+.sp-office .cell-screen--pale {
+  fill: var(--bg-3);
+}
+.sp-office .cell-lines rect {
+  fill: var(--bg);
+  opacity: 0.35;
+}
+.sp-office .cell-tool {
+  font-family: var(--font-mono);
+  font-size: 8px;
+  fill: var(--bg);
+}
+.sp-office .cell-mono {
+  font-family: var(--font-display);
+  font-size: 7.5px;
+  font-weight: 600;
+  fill: var(--fg-3);
+}
+.sp-office .cell-lid {
+  fill: var(--bg-3);
+  transition: fill 120ms linear;
+}
+.sp-office .cell-lid--lit {
+  fill: var(--fg-2);
+}
+.sp-office .cell-more {
+  font-family: var(--font-mono);
+  font-size: 8px;
+  fill: var(--fg-3);
+}
+.sp-office .cell-z,
+.sp-office .pl-z {
+  font-family: var(--font-ui);
+  font-size: 9px;
+  fill: var(--fg-4);
+}
+.sp-office .helper-lamp {
+  fill: var(--needs);
+}
+
+/* ---------- plan: marks ---------- */
+
+.sp-office .pl-line {
+  transition: fill 120ms linear;
+}
+.sp-office .pl-line--off {
+  fill: var(--fg-4);
+}
+.sp-office .pl-line--lit {
+  fill: var(--fg);
+}
+.sp-office .pl-line--dim {
+  fill: var(--line-2);
+}
+.sp-office .pl-tool {
+  font-family: var(--font-mono);
+  font-size: 9px;
+  fill: var(--fg-2);
+}
+.sp-office .pl-mono {
+  font-family: var(--font-display);
+  font-size: 9px;
+  font-weight: 600;
+  fill: oklch(0.55 0.1 var(--hue));
+}
+.sp-office .pl-mat {
+  fill: oklch(0.7 0.06 var(--hue));
+}
+.sp-office[data-scheme="dark"] .pl-mono {
+  fill: oklch(0.72 0.1 var(--hue));
+}
+.sp-office[data-scheme="dark"] .pl-mat {
+  fill: oklch(0.5 0.06 var(--hue));
+}
+.sp-office .pl-lid {
+  fill: var(--fg-4);
+  transition: fill 120ms linear;
+}
+.sp-office .pl-lid--lit {
+  fill: var(--fg);
+}
+.sp-office .pl-more {
+  font-family: var(--font-mono);
+  font-size: 8px;
+  fill: var(--fg-3);
+}
+.sp-office .pl-chair--gone {
+  --pl-chair: var(--line-2);
+}
+.sp-office .pl-sitter--stale {
+  --pl-head: var(--fg-4);
+  --pl-arc: var(--fg-4);
+}
+.sp-office .pl-seat {
+  transform: translateY(var(--pull, 0px));
+}
+.sp-office .pl-ring {
+  fill: none;
+  stroke: var(--needs);
+  stroke-width: 2;
+}
+
+/* the walk sprite is hidden unless a phase animation shows it */
+.sp-office .walker {
+  opacity: 0;
+}
+.sp-office .legs-b {
+  opacity: 0;
+}
+.sp-office .cell--leaving .seated,
+.sp-office .cell--leaving .pl-seat,
+.sp-office .cell--leaving .cell-plate,
+.sp-office .cell--leaving .cell-bubble,
+.sp-office .cell--leaving .cell-helper {
+  opacity: 0;
+}
+
+/* ---------- tooltip ---------- */
+
+.sp-office .cell-tip {
+  position: absolute;
+  z-index: 30;
+  top: 100%;
+  left: 0;
+  width: max-content;
+  min-width: 160px;
+  max-width: 260px;
+  margin-top: 2px;
+  padding: 7px 10px;
+  border: 1px solid var(--line-2);
+  border-radius: 6px;
+  background: var(--bg-2);
+  color: var(--fg-2);
+  font-size: var(--text-xs);
+  line-height: 1.4;
+  text-align: left;
+  white-space: normal;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  visibility: hidden;
+  pointer-events: none;
+}
+.sp-office .cell-tip b {
+  color: var(--fg);
+  font-weight: 600;
+}
+.sp-office .cell-tip code {
+  color: var(--fg);
+}
+.sp-office .cell-tip-attn {
+  color: var(--needs-fg);
+}
+.sp-office .cell-helper .cell-tip {
+  left: -60px;
+}
+.sp-office .cell-link:hover .cell-tip,
+.sp-office .cell-link:focus-visible .cell-tip,
+.sp-office .cell-helper:hover .cell-tip,
+.sp-office .cell-helper:focus-visible .cell-tip {
+  visibility: visible;
+  transition: visibility 0s 150ms;
+}
+
+/* ---------- legend ---------- */
+
+.sp-office .legend-btn {
+  width: 26px;
+  height: 26px;
+  border: 1px solid var(--line-2);
+  border-radius: 6px;
+  color: var(--fg-3);
+  font-size: 13px;
+}
+.sp-office .legend-btn:hover,
+.sp-office .legend-btn[aria-expanded="true"] {
+  color: var(--fg);
+  background: var(--bg-3);
+}
+.sp-office .legend {
+  position: absolute;
+  z-index: 40;
+  right: 0;
+  top: 100%;
+  margin-top: 8px;
+  width: min(400px, 100%);
+  padding: 10px 14px 12px;
+  border: 1px solid var(--line-2);
+  border-radius: 6px;
+  background: var(--bg-2);
+  --o-top: var(--bg-4);
+  --o-edge: var(--line-2);
+  --o-wood: var(--fg-4);
+  --o-chair: var(--fg-4);
+  --o-sheet: var(--bg-2);
+  --o-needs: var(--needs);
+  --look-hair: oklch(0.28 0.02 60);
+  --look-trouser: var(--fg-3);
+  --pl-head: var(--fg-2);
+  --pl-arc: var(--fg-3);
+  --pl-chair: var(--fg-4);
+}
+.sp-office .legend-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+  font-size: var(--text-sm);
+  font-weight: 600;
+}
+.sp-office .legend-close {
+  width: 24px;
+  height: 24px;
+  border-radius: 6px;
+  color: var(--fg-3);
+  font-size: 16px;
+}
+.sp-office .legend-close:hover {
+  color: var(--fg);
+  background: var(--bg-3);
+}
+.sp-office .legend-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 7px;
+}
+.sp-office .legend-list li {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: var(--text-xs);
+  color: var(--fg-2);
+}
+.sp-office .legend-list li > :first-child {
+  flex: none;
+  width: 56px;
+  display: flex;
+  justify-content: center;
+}
+.sp-office .legend-list b {
+  color: var(--fg);
+  font-weight: 600;
+  margin-right: 3px;
+}
+.sp-office .legend-bubble {
+  padding: 0 6px;
+  border-radius: 7px;
+  background: var(--needs-bg);
+  color: var(--fg);
+  font-size: 9px;
+  line-height: 14px;
+}
+.sp-office .legend-mono {
+  font-family: var(--font-display);
+  font-size: 9px;
+  font-weight: 600;
+  color: var(--fg-3);
+}
+.sp-office .legend-num {
+  font-family: var(--font-mono);
+  font-size: 9px;
+  color: var(--fg-3);
+}
+.sp-office .legend-line {
+  width: 24px;
+  height: 4px;
+  background: color-mix(in oklch, var(--line-2) 55%, var(--o-window, var(--line-2)) 45%);
+}
+.sp-office .legend-plant {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: oklch(0.6 0.06 150);
+}
+
+/* ---------- empty office ---------- */
+
+.sp-office .office-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 16px;
+}
+.sp-office .office-ways {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 6px;
+  font-size: var(--text-sm);
+  color: var(--fg-2);
+}
+.sp-office .office-ways strong {
+  color: var(--fg);
+  font-weight: 600;
+}
+
+/* ---------- phone ---------- */
+
+@media (max-width: 480px) {
+  .sp-office .room-home {
+    top: auto;
+    left: auto;
+    right: 24px;
+    bottom: 3px;
+    margin: 0;
+    background: none;
+  }
+}
+
+/* ---------- motion (DESIGN.md §7, §13) ---------- */
+
+@media (prefers-reduced-motion: no-preference) {
+  .sp-office .cell--typing .hands,
+  .sp-office .cell--typing .pl-arc {
+    animation: o-type 500ms steps(2, jump-none) infinite;
+    animation-delay: calc(var(--slot4, 0) * 125ms);
+  }
+  .sp-office .cell-lines {
+    animation: o-lines 1.5s steps(1, end) infinite;
+    animation-delay: calc(var(--slot3, 0) * 500ms);
+  }
+  .sp-office .arm-raise {
+    transform-box: view-box;
+    transform-origin: 5px -16px;
+    animation: o-raise 240ms var(--ease-out);
+  }
+  .sp-office .stander,
+  .sp-office .pl-beside {
+    animation: o-step 240ms var(--ease-out);
+  }
+  .sp-office .pl-seat {
+    transition: transform 200ms var(--ease-out);
+  }
+  .sp-office .pl-ring,
+  .sp-office .cell-lamp {
+    animation: o-fade 300ms linear;
+  }
+  .sp-office .cell-bubble {
+    animation: o-pop 160ms var(--ease-out);
+  }
+  .sp-office .cell-sheet--top {
+    animation: o-sheet 200ms var(--ease-out);
+  }
+  .sp-office .cell-tool {
+    animation: o-fade 120ms linear;
+  }
+  .sp-office .cell-mug-hand {
+    animation: o-mug 200ms var(--ease-out);
+  }
+  .sp-office .head-down {
+    animation: o-head-down 300ms var(--ease-in);
+  }
+  .sp-office .cell-chair-in,
+  .sp-office .pl-chair--gone {
+    animation: o-chair-in 300ms var(--ease-in);
+  }
+  .sp-office .cell--arriving .walker {
+    animation:
+      o-walk-in 900ms linear both,
+      o-vanish 1ms linear 900ms forwards;
+  }
+  .sp-office .cell--arriving .seated,
+  .sp-office .cell--arriving .pl-seat {
+    animation: o-sit 200ms var(--ease-out) 900ms both;
+  }
+  .sp-office .cell--leaving .walker {
+    animation:
+      o-walk-out 900ms linear 200ms both,
+      o-fadeout 200ms linear 1100ms forwards;
+  }
+  .sp-office .cell--arriving.cell--nowalk .walker {
+    display: none;
+  }
+  .sp-office .cell--arriving.cell--nowalk .seated,
+  .sp-office .cell--arriving.cell--nowalk .pl-seat {
+    animation: o-fade 200ms linear both;
+  }
+  .sp-office .cell--arriving .legs-a,
+  .sp-office .cell--leaving .legs-a {
+    animation: o-legs-a 500ms steps(2, jump-none) infinite;
+  }
+  .sp-office .cell--arriving .legs-b,
+  .sp-office .cell--leaving .legs-b {
+    animation: o-legs-b 500ms steps(2, jump-none) infinite;
+  }
+  .sp-office .office--paused .hands,
+  .sp-office .office--paused .pl-arc,
+  .sp-office .office--paused .cell-lines,
+  .sp-office .office--paused .legs-a,
+  .sp-office .office--paused .legs-b {
+    animation-play-state: paused;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sp-office .walker {
+    display: none;
+  }
+  .sp-office .cell--arriving .seated,
+  .sp-office .cell--arriving .pl-seat {
+    animation: none;
+  }
+  .sp-office .cell--leaving {
+    opacity: 0;
+  }
+}
+
+@keyframes o-type {
+  from {
+    transform: translateY(0);
+  }
+  to {
+    transform: translateY(-1px);
+  }
+}
+@keyframes o-lines {
+  from {
+    transform: translateY(0);
+  }
+  to {
+    transform: translateY(-4px);
+  }
+}
+@keyframes o-raise {
+  from {
+    transform: rotate(60deg);
+  }
+  to {
+    transform: rotate(0deg);
+  }
+}
+@keyframes o-step {
+  from {
+    transform: translate(-24px, 6px);
+  }
+}
+@keyframes o-pop {
+  from {
+    transform: scale(0.8);
+    opacity: 0;
+  }
+  to {
+    transform: scale(1);
+    opacity: 1;
+  }
+}
+@keyframes o-sheet {
+  from {
+    transform: translateY(-3px);
+    opacity: 0;
+  }
+}
+@keyframes o-mug {
+  from {
+    transform: translate(34px, -3px);
+  }
+}
+@keyframes o-head-down {
+  from {
+    transform: translateY(-8px);
+  }
+}
+@keyframes o-chair-in {
+  from {
+    transform: translateY(6px);
+    opacity: 0;
+  }
+}
+@keyframes o-fade {
+  from {
+    opacity: 0;
+  }
+}
+@keyframes o-fadeout {
+  to {
+    opacity: 0;
+  }
+}
+@keyframes o-vanish {
+  from {
+    opacity: 1;
+  }
+  to {
+    opacity: 0;
+  }
+}
+@keyframes o-walk-in {
+  0% {
+    transform: translate(var(--dx), var(--dy));
+    opacity: 1;
+  }
+  40% {
+    transform: translate(var(--dx2), var(--dy));
+    opacity: 1;
+  }
+  80% {
+    transform: translate(var(--dx2), 0);
+    opacity: 1;
+  }
+  100% {
+    transform: translate(0, 0);
+    opacity: 1;
+  }
+}
+@keyframes o-walk-out {
+  0% {
+    transform: translate(0, 0);
+    opacity: 1;
+  }
+  20% {
+    transform: translate(var(--dx2), 0);
+    opacity: 1;
+  }
+  60% {
+    transform: translate(var(--dx2), var(--dy));
+    opacity: 1;
+  }
+  100% {
+    transform: translate(var(--dx), var(--dy));
+    opacity: 1;
+  }
+}
+@keyframes o-sit {
+  from {
+    transform: translateY(-4px);
+    opacity: 0;
+  }
+  to {
+    transform: translateY(0);
+    opacity: 1;
+  }
+}
+@keyframes o-legs-a {
+  from {
+    opacity: 1;
+  }
+  to {
+    opacity: 0;
+  }
+}
+@keyframes o-legs-b {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}

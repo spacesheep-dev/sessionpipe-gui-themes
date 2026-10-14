@@ -130,6 +130,9 @@ export interface InstalledTheme extends ThemeManifest {
   dir?: string;
   /** Linked from a folder for development (changes show on reload). */
   linked?: boolean;
+  /** Why this entry cannot be loaded (bad manifest, api too new, …); such a theme is
+   *  listed so the problem is visible, but gets no nav entry. */
+  error?: string;
 }
 
 export const THEME_ROUTES = {

@@ -10,6 +10,7 @@ ES module beside a `theme.json`, installed outside the GUI and loaded at runtime
 | Package | What it is |
 | --- | --- |
 | [`packages/canvas`](packages/canvas) | **Canvas** (`/t/canvas`): every live session as a window on an infinite, pannable, zoomable canvas. Drag them anywhere; the layout follows you across devices. Experimental. |
+| [`packages/office`](packages/office) | **Office** (`/t/office`): every machine a room, every live session a person at a desk; posture is the state, amber marks who needs you. A floor plan by default, figures on request. Drawn with the host's React. Experimental. |
 | [`packages/shared-types`](packages/shared-types) | Type-only mirror of the GUI's theme contract, kept in sync by hand. |
 
 ## Working on a theme
