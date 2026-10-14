@@ -37,6 +37,7 @@ export interface MapNode {
   online?: boolean;
   needs?: boolean;
   current?: boolean;
+  strength?: "needs" | "working" | "stale" | "idle";
   x: number;
   y: number;
   w: number;
@@ -49,6 +50,8 @@ interface Edge {
   b: string;
   kind: "device" | "agent" | "session" | "custom";
   id?: string;
+  /** The session's state, for coloured highlights. */
+  state?: string;
 }
 
 export interface MapHost {
@@ -73,6 +76,8 @@ export interface MapHost {
 
 export const LANES = ["devices", "", "agents", "machines", "storage"] as const;
 const HUB_H = 28;
+/** How far outside a lane its bus runs. */
+const BUS_GAP = 14;
 const MIN_LANE_W = 960;
 const LANE_PAD = 80;
 
@@ -125,6 +130,7 @@ export class MapLayer {
     if (!on) {
       this.edgesG.replaceChildren();
       this.lineEls.clear();
+      this.trunkEls.clear();
       this.closePopover();
       this.setFocus(null);
     }
@@ -211,6 +217,14 @@ export class MapLayer {
         .map(([h, v]) => `${this.host.api.format.monogram(h)} ${v}`)
         .join(" · ");
       const sub = c ? (c.online ? versions || "online" : "offline") : "not paired";
+      // The dot takes the strongest state of the machine's sessions.
+      let strength: "needs" | "working" | "stale" | "idle" = "idle";
+      for (const sess of s.sessions.values()) {
+        if (sess.machine !== m.name || sess.parentId) continue;
+        if (sess.state === "needs_you") strength = "needs";
+        else if (sess.state === "working" && strength !== "needs") strength = "working";
+        else if (sess.state === "stale" && strength === "idle") strength = "stale";
+      }
       want.push({
         id: `machine:${m.name}`,
         kind: "machine",
@@ -221,6 +235,7 @@ export class MapLayer {
         machineId: c?.machineId,
         online: !!c?.online,
         needs: m.needsYou > 0,
+        strength,
       });
     }
 
@@ -250,9 +265,31 @@ export class MapLayer {
       for (const id of Object.keys(lay.nodes)) if (!ids.has(id)) delete lay.nodes[id];
     }
 
+    // Chips in the order of the windows they connect to, so lines don't cross.
+    const wins = this.host.liveWindows();
+    const cx = (sess: SessionSummary) => {
+      const w = wins.find((x) => x.session.key === sess.key);
+      return w ? w.rect.x + w.rect.w / 2 : undefined;
+    };
+    for (const n of want) {
+      if (!n.chips?.length) continue;
+      const bary = new Map<string, number>();
+      for (const c of n.chips) {
+        const xs: number[] = [];
+        for (const sess of s.sessions.values()) {
+          if (sess.parentId || sess.harness !== c.harness || sess.accountId !== c.accountId) continue;
+          const x = cx(sess);
+          if (x !== undefined) xs.push(x);
+        }
+        bary.set(c.id, xs.length ? xs.reduce((a, b) => a + b, 0) / xs.length : Number.POSITIVE_INFINITY);
+      }
+      n.chips.sort((a, b) => bary.get(a.id)! - bary.get(b.id)!);
+    }
     const sig = want
       .map((n) =>
-        [n.id, n.label, n.sub, n.online, n.needs, n.current, n.chips?.map((c) => c.label).join("|")].join("\u0002"),
+        [n.id, n.label, n.sub, n.online, n.needs, n.current, n.strength, n.chips?.map((c) => c.label).join("|")].join(
+          "\u0002",
+        ),
       )
       .join("\u0001");
     // Widths come from the DOM, so a build while the layer is hidden must run again
@@ -312,6 +349,7 @@ export class MapLayer {
     if (n.kind === "machine") {
       const dot = el("span", "cv-node-dot");
       setClass(dot, "is-on", !!n.online);
+      dot.dataset.s = n.strength ?? "idle";
       e.append(dot);
     }
     if (n.kind === "custom") {
@@ -371,10 +409,12 @@ export class MapLayer {
         if (!st || !Number.isFinite(st.x) || st.x < 0 || st.x + n.w > W - PAD) return undefined;
         return st.x;
       };
+      const bary = new Map(members.map((n) => [n.id, this.barycenter(n.id)]));
       members.sort((p, q) => {
         const a = stored(p);
         const c = stored(q);
-        if (a === undefined && c === undefined) return 0;
+        if (a === undefined && c === undefined)
+          return bary.get(p.id)! - bary.get(q.id)! || p.label.localeCompare(q.label);
         if (a === undefined) return 1;
         if (c === undefined) return -1;
         return a - c;
@@ -497,31 +537,47 @@ export class MapLayer {
   // ---------- edges ----------
 
   private computeEdges(): Edge[] {
-    const s = this.host.snapshot();
     const lay = this.host.layout();
     const edges: Edge[] = [];
     for (const n of this.nodes.values()) if (n.kind === "device") edges.push({ a: n.id, b: "hub", kind: "device" });
-    const acctMachine = new Set<string>();
-    for (const sess of s.sessions.values()) {
-      if (sess.parentId || !sess.machine) continue;
-      const from = sess.accountId ? `acct:${sess.harness}:${sess.accountId}` : `agent:${sess.harness}`;
-      const key = `${from}→machine:${sess.machine}`;
-      if (!acctMachine.has(key) && this.nodes.has(`machine:${sess.machine}`)) {
-        acctMachine.add(key);
-        edges.push({ a: from, b: `machine:${sess.machine}`, kind: "agent" });
-      }
-    }
     for (const { session } of this.host.liveWindows()) {
+      const from = `win:${session.key}`;
+      // Up to the account it runs as (or its harness when the account is unknown).
+      const chip = session.accountId ? `acct:${session.harness}:${session.accountId}` : undefined;
+      if (chip && this.chipRect(chip)) edges.push({ a: from, b: chip, kind: "agent", state: session.state });
+      else if (this.nodes.has(`agent:${session.harness}`))
+        edges.push({ a: from, b: `agent:${session.harness}`, kind: "agent", state: session.state });
       if (session.machine && this.nodes.has(`machine:${session.machine}`)) {
-        edges.push({ a: `win:${session.key}`, b: `machine:${session.machine}`, kind: "session" });
+        edges.push({ a: from, b: `machine:${session.machine}`, kind: "session", state: session.state });
       }
       if (session.repo) {
         const id = `repo:${repoParts(session.repo).short}`;
-        if (this.nodes.has(id)) edges.push({ a: `win:${session.key}`, b: id, kind: "session" });
+        if (this.nodes.has(id)) edges.push({ a: from, b: id, kind: "session", state: session.state });
       }
     }
     for (const l of lay.links ?? []) edges.push({ a: l.from, b: l.to, kind: "custom", id: l.id });
     return edges;
+  }
+
+  /** Mean x of the windows an endpoint connects to; nodes pack in that order. */
+  private barycenter(id: string): number {
+    const xs: number[] = [];
+    for (const e of this.edges) {
+      if (e.kind === "custom") continue;
+      const other = e.b === id ? e.a : e.a === id ? e.b : undefined;
+      if (!other) continue;
+      const r = this.endRect(other);
+      if (r) xs.push(r.x + r.w / 2);
+    }
+    if (id.startsWith("agent:")) {
+      // A group follows its chips.
+      const n = this.nodes.get(id);
+      for (const c of n?.chips ?? []) {
+        const b = this.barycenter(c.id);
+        if (Number.isFinite(b)) xs.push(b);
+      }
+    }
+    return xs.length ? xs.reduce((a, b) => a + b, 0) / xs.length : Number.POSITIVE_INFINITY;
   }
 
   /** Lines and lanes from the current rects. Called from the frame when anything moved. */
@@ -536,48 +592,60 @@ export class MapLayer {
     }
     for (const n of this.nodes.values()) n.el.style.transform = `translate3d(${n.x}px, ${n.y}px, 0)`;
 
-    // One <line> per edge, kept across frames: attributes change only when an end moved.
+    // Orthogonal routing: an edge leaves its source straight (down to a machine or repo,
+    // up to an account), reaches a bus a few px outside the target's lane, runs along it
+    // and joins the target's trunk; every edge to one target shares the bus and the
+    // trunk, so N sessions → one machine draw as one bundle. Paths are kept across
+    // frames and only get new geometry when an end moved.
     const seen = new Set<string>();
-    let changed = false;
+    const trunks = new Map<string, { x: number; busY: number; ty: number; up: boolean; lit?: boolean }>();
     for (const e of this.edges) {
       const a = this.endRect(e.a);
       const b = this.endRect(e.b);
       if (!a || !b) continue;
-      // Lane edges leave a node's bottom and enter the next one's top; hand-drawn
-      // links go centre to centre, which the nodes cover at both ends.
-      const down = a.y + a.h <= b.y;
-      const up = b.y + b.h <= a.y;
-      const x1 = a.x + a.w / 2;
-      const y1 = e.kind === "custom" ? a.y + a.h / 2 : down ? a.y + a.h : up ? a.y : a.y + a.h / 2;
-      const x2 = b.x + b.w / 2;
-      const y2 = e.kind === "custom" ? b.y + b.h / 2 : down ? b.y : up ? b.y + b.h : b.y + b.h / 2;
       const key = `${e.a}|${e.b}`;
       seen.add(key);
+      let d: string;
+      if (e.kind === "custom") {
+        d = `M${a.x + a.w / 2},${a.y + a.h / 2} L${b.x + b.w / 2},${b.y + b.h / 2}`;
+      } else {
+        const up = b.y + b.h <= a.y;
+        const lane = this.laneOf(e.b);
+        const row = lane >= 0 ? this.rows[lane]! : null;
+        const busY = row ? (up ? row.y + row.h + BUS_GAP : row.y - BUS_GAP) : up ? b.y + b.h + BUS_GAP : b.y - BUS_GAP;
+        // Machine and repo drops sit a little apart so they don't overlap under a window.
+        const dx = e.kind === "session" && e.b.startsWith("repo:") ? 5 : e.kind === "session" ? -5 : 0;
+        const sx = a.x + a.w / 2 + dx;
+        const sy = up ? a.y : a.y + a.h;
+        const tx = b.x + b.w / 2;
+        const ty = up ? b.y + b.h : b.y;
+        d = orthoPath([
+          [sx, sy],
+          [sx, busY],
+          [tx, busY],
+        ]);
+        const t = trunks.get(e.b);
+        if (!t) trunks.set(e.b, { x: tx, busY, ty, up });
+      }
       let rec = this.lineEls.get(key);
       if (!rec) {
-        const line = svg("line", { class: `cv-edge cv-edge-${e.kind}`, "data-a": e.a, "data-b": e.b });
-        let hit: SVGLineElement | undefined;
+        const line = svg("path", { class: `cv-edge cv-edge-${e.kind}`, "data-a": e.a, "data-b": e.b });
+        if (e.state) line.dataset.state = e.state;
+        let hit: SVGPathElement | undefined;
         if (e.kind === "custom" && e.id) {
           line.dataset.link = e.id;
-          hit = svg("line", { class: "cv-edge-hit", "data-a": e.a, "data-b": e.b });
+          hit = svg("path", { class: "cv-edge-hit", "data-a": e.a, "data-b": e.b });
           hit.dataset.link = e.id;
         }
         rec = { line, hit, coords: "" };
         this.lineEls.set(key, rec);
         this.edgesG.append(line);
         if (hit) this.edgesG.append(hit);
-        changed = true;
-      }
-      const coords = `${x1},${y1},${x2},${y2}`;
-      if (rec.coords !== coords) {
-        rec.coords = coords;
-        for (const el of [rec.line, rec.hit]) {
-          if (!el) continue;
-          el.setAttribute("x1", `${x1}`);
-          el.setAttribute("y1", `${y1}`);
-          el.setAttribute("x2", `${x2}`);
-          el.setAttribute("y2", `${y2}`);
-        }
+      } else if (e.state && rec.line.dataset.state !== e.state) rec.line.dataset.state = e.state;
+      if (rec.coords !== d) {
+        rec.coords = d;
+        rec.line.setAttribute("d", d);
+        rec.hit?.setAttribute("d", d);
       }
       if (e.kind === "custom") setClass(rec.line, "is-selected", this.selected === e.id);
     }
@@ -586,11 +654,32 @@ export class MapLayer {
       rec.line.remove();
       rec.hit?.remove();
       this.lineEls.delete(key);
-      changed = true;
     }
-    if (changed && this.focus) this.applyFocus();
+    // One trunk per target: from the bus into the node.
+    for (const [target, t] of trunks) {
+      let el = this.trunkEls.get(target);
+      if (!el) {
+        el = svg("path", { class: "cv-trunk", "data-b": target });
+        this.trunkEls.set(target, el);
+        this.edgesG.append(el);
+      }
+      const d = `M${t.x},${t.busY} L${t.x},${t.ty}`;
+      if (el.getAttribute("d") !== d) el.setAttribute("d", d);
+    }
+    for (const [target, el] of this.trunkEls) {
+      if (trunks.has(target)) continue;
+      el.remove();
+      this.trunkEls.delete(target);
+    }
+    if (this.focus) this.applyFocus();
   }
-  private lineEls = new Map<string, { line: SVGLineElement; hit?: SVGLineElement; coords: string }>();
+  private lineEls = new Map<string, { line: SVGPathElement; hit?: SVGPathElement; coords: string }>();
+  private trunkEls = new Map<string, SVGPathElement>();
+
+  private laneOf(id: string): number {
+    if (id.startsWith("acct:")) return 2;
+    return this.nodes.get(id)?.lane ?? -1;
+  }
 
   // ---------- hover focus ----------
 
@@ -604,29 +693,30 @@ export class MapLayer {
   private applyFocus() {
     const id = this.focus;
     const lit = new Set<string>();
+    const litTargets = new Set<string>();
     if (id) {
       lit.add(id);
+      const group = id.startsWith("agent:") ? `acct:${id.slice(6)}:` : undefined;
       for (const e of this.edges) {
-        const hitA =
-          e.a === id || e.a.startsWith(`${id}`) || (id.startsWith("agent:") && e.a.startsWith(`acct:${id.slice(6)}:`));
-        const hitB = e.b === id;
-        if (hitA || hitB) {
-          lit.add(e.a);
-          lit.add(e.b);
-          if (e.a.startsWith("acct:")) lit.add(`agent:${e.a.split(":")[1]}`);
-        }
+        const touches =
+          e.a === id || e.b === id || (group !== undefined && (e.a.startsWith(group) || e.b.startsWith(group)));
+        if (!touches) continue;
+        lit.add(e.a);
+        lit.add(e.b);
+        if (e.kind !== "custom") litTargets.add(e.b);
+        if (e.a.startsWith("acct:")) lit.add(`agent:${e.a.split(":")[1]}`);
+        if (e.b.startsWith("acct:")) lit.add(`agent:${e.b.split(":")[1]}`);
       }
     }
-    for (const line of this.edgesG.children) {
-      const a = (line as SVGElement).dataset.a!;
-      const b = (line as SVGElement).dataset.b!;
-      const on = !!id && lit.has(a) && lit.has(b) && (a === id || b === id || a.startsWith("acct:") || lit.has(id));
-      setClass(
-        line,
-        "is-lit",
-        on && (a === id || b === id || (id.startsWith("agent:") && a.startsWith(`acct:${id.slice(6)}:`))),
-      );
+    const group = id?.startsWith("agent:") ? `acct:${id.slice(6)}:` : undefined;
+    for (const rec of this.lineEls.values()) {
+      const a = rec.line.dataset.a!;
+      const b = rec.line.dataset.b!;
+      const on =
+        !!id && (a === id || b === id || (group !== undefined && (a.startsWith(group) || b.startsWith(group))));
+      setClass(rec.line, "is-lit", on);
     }
+    for (const [target, el] of this.trunkEls) setClass(el, "is-lit", litTargets.has(target));
     for (const n of this.nodes.values()) setClass(n.el, "is-lit", lit.has(n.id));
     for (const w of this.host.root.querySelectorAll<HTMLElement>(".cv-win")) {
       setClass(w, "is-lit", lit.has(`win:${w.dataset.key}`));
@@ -894,6 +984,32 @@ export class MapLayer {
     this.edgesG.remove();
     this.tempLine.remove();
   }
+}
+
+/** A polyline with rounded corners (6 px) as an SVG path. */
+export function orthoPath(pts: [number, number][], r = 6): string {
+  if (pts.length < 2) return "";
+  let d = `M${pts[0]![0]},${pts[0]![1]}`;
+  for (let i = 1; i < pts.length - 1; i++) {
+    const [px, py] = pts[i - 1]!;
+    const [x, y] = pts[i]!;
+    const [nx, ny] = pts[i + 1]!;
+    const inLen = Math.hypot(x - px, y - py);
+    const outLen = Math.hypot(nx - x, ny - y);
+    const rr = Math.min(r, inLen / 2, outLen / 2);
+    if (rr < 0.5 || inLen === 0 || outLen === 0) {
+      d += ` L${x},${y}`;
+      continue;
+    }
+    const ux = (x - px) / inLen;
+    const uy = (y - py) / inLen;
+    const vx = (nx - x) / outLen;
+    const vy = (ny - y) / outLen;
+    d += ` L${x - ux * rr},${y - uy * rr} Q${x},${y} ${x + vx * rr},${y + vy * rr}`;
+  }
+  const [lx, ly] = pts[pts.length - 1]!;
+  d += ` L${lx},${ly}`;
+  return d;
 }
 
 export function harnessShort(h: string): string {

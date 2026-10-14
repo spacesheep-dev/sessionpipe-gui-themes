@@ -62,6 +62,18 @@ the first message, and the new window appears above the machine when it acks.
 drag from a node's edge handle to another node, or a window, to draw a link; Backspace
 removes the selected node or link. Both persist with the layout.
 
+**Colour and recency** — the Colour toggle (on by default, per device) gives each state its
+own mark: working is teal (a 2 px left rule, the dot, the "now" line, a tinted title bar),
+needs-you stays amber, stale is slate with a dashed border and its body at 70 %, idle and
+done stay grey. The latest session carries a small "latest" in its title bar; every other
+window's border and title fade with age on a log scale (2 min · 15 min · 1 h · 6 h). Press
+`?` for the legend (it also shows once when colour is first turned on). Map lines are quiet
+hairlines that draw only for what you hover (Lines: hovered · all · none, per device);
+they leave a window straight, run along a bus outside the target's lane and join one trunk
+per machine, repo or account, so many sessions on one machine draw as one bundle; nodes
+pack in the order of the windows they connect to, and Tidy clusters windows by machine
+while the map is on.
+
 **Navigation** — drag the empty canvas or scroll to pan; ctrl/⌘ + wheel or pinch to zoom
 (25 %–200 %); hold Space to pan from over a window. Keys: `0` fit, `+` / `-` zoom, arrows nudge
 the focused window (Shift for bigger steps), `/` find (matches light up, the rest dim; it pans

@@ -156,6 +156,8 @@ export interface ThemeApi {
 export interface OpenSessionOptions {
   split?: boolean;
   from?: { x: number; y: number; width: number; height: number };
+  /** With `split`: add the session as a tab without switching to it. */
+  background?: boolean;
 }
 
 /** The module's default export. `mount` returns the function that unmounts. */

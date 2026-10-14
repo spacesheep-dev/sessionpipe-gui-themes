@@ -55,6 +55,7 @@ export interface InputHost {
   hover(id: string | null): void;
   answerFocused(decision: "allow" | "deny"): void;
   enterFocused(): void;
+  toggleLegend(): void;
 }
 
 interface Pointer {
@@ -344,6 +345,10 @@ export function attachInput(host: InputHost): () => void {
         return;
       case "/":
         host.focusSearch();
+        e.preventDefault();
+        return;
+      case "?":
+        host.toggleLegend();
         e.preventDefault();
         return;
       case "Escape":

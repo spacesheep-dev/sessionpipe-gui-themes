@@ -86,10 +86,14 @@
 /* ---------- windows ---------- */
 
 .cv-win {
+  --cv-rule: 0 0 0 0 transparent;
+  --cv-border: var(--line);
+  --cv-age: 1;
   position: absolute;
   left: 0;
   top: 0;
   box-sizing: border-box;
+  box-shadow: var(--cv-rule);
   display: flex;
   flex-direction: column;
   background: var(--bg-2);
@@ -1126,19 +1130,30 @@
 .spcv.is-linking .cv-node-h {
   opacity: 1;
 }
-.cv-edge {
+.cv-edge,
+.cv-trunk {
   fill: none;
-  stroke: var(--fg-4);
+  stroke: var(--line-2);
   stroke-width: 1;
+  opacity: 0.5;
   vector-effect: non-scaling-stroke;
 }
 .cv-edge-device {
   stroke-dasharray: 1 4;
   stroke-linecap: round;
 }
-.cv-edge-session {
-  stroke: var(--line-2);
-  opacity: 0.6;
+/* which lines show: hovered (default), all, none; hand-drawn links always */
+.spcv.lines-hovered .cv-edge:not(.is-lit):not(.cv-edge-custom),
+.spcv.lines-hovered .cv-trunk:not(.is-lit),
+.spcv.lines-none .cv-edge:not(.cv-edge-custom),
+.spcv.lines-none .cv-trunk {
+  display: none;
+}
+.cv-lines {
+  display: none;
+}
+.spcv.has-map .cv-lines {
+  display: inline-block;
 }
 .cv-lane-l:empty {
   display: none;
@@ -1168,12 +1183,23 @@
 }
 
 /* hover a node: its lines light up, the rest steps back */
-.spcv.is-focus .cv-edge:not(.is-lit) {
+.spcv.is-focus .cv-edge:not(.is-lit),
+.spcv.is-focus .cv-trunk:not(.is-lit) {
   opacity: 0.2;
 }
-.spcv.is-focus .cv-edge.is-lit {
+.spcv.is-focus .cv-edge.is-lit,
+.spcv.is-focus .cv-trunk.is-lit {
   stroke: var(--fg);
   opacity: 1;
+}
+.spcv.has-colour.is-focus .cv-edge.is-lit[data-state="working"] {
+  stroke: var(--state-working);
+}
+.spcv.has-colour.is-focus .cv-edge.is-lit[data-state="needs_you"] {
+  stroke: var(--needs);
+}
+.spcv.has-colour.is-focus .cv-edge.is-lit[data-state="stale"] {
+  stroke: var(--state-stale);
 }
 .spcv.is-focus .cv-tether {
   opacity: 0.35;
@@ -1314,7 +1340,11 @@
   background-color: var(--cv-floor);
   background-image: radial-gradient(circle, var(--cv-dot) 1px, transparent 1.5px);
 }
-.spcv[data-scheme="light"] .cv-win,
+.spcv[data-scheme="light"] .cv-win {
+  background: var(--bg-2);
+  border-color: var(--line-2);
+  box-shadow: var(--cv-rule, 0 0 0 0 transparent), var(--cv-shadow);
+}
 .spcv[data-scheme="light"] .cv-node,
 .spcv[data-scheme="light"] .cv-tile,
 .spcv[data-scheme="light"] .cv-chip,
@@ -1344,4 +1374,160 @@
 }
 .spcv[data-scheme="light"] .cv-node-h {
   background: var(--bg-2);
+}
+
+/* ---------- colour by state (the Colour toggle, on by default) ---------- */
+
+.spcv.has-colour .cv-win[data-state="working"] {
+  --cv-rule: inset 2px 0 0 var(--state-working);
+}
+.spcv.has-colour .cv-win[data-state="working"] .cv-win-bar {
+  background: var(--state-working-bg);
+}
+.spcv.has-colour .cv-win[data-state="working"] .cv-dot {
+  background: var(--state-working);
+}
+.spcv.has-colour .cv-win[data-state="working"] .cv-win-now-l {
+  color: var(--state-working);
+}
+.spcv.has-colour .cv-win[data-state="needs_you"] {
+  --cv-rule: inset 2px 0 0 var(--needs);
+}
+.spcv.has-colour .cv-win[data-state="stale"] {
+  --cv-rule: inset 2px 0 0 var(--state-stale);
+  border-style: dashed;
+}
+.spcv.has-colour .cv-win[data-state="stale"] .cv-dot {
+  background: var(--state-stale);
+  box-shadow: none;
+}
+.spcv.has-colour .cv-win[data-state="stale"] .cv-win-now-l {
+  color: var(--state-stale);
+}
+.spcv.has-colour .cv-win[data-state="stale"] .cv-win-body {
+  opacity: 0.7;
+}
+.spcv.has-colour .cv-tile {
+  color: var(--state-done);
+}
+.spcv.has-colour .cv-node-dot[data-s="working"] {
+  background: var(--state-working);
+  box-shadow: none;
+}
+.spcv.has-colour .cv-node-dot[data-s="stale"] {
+  background: var(--state-stale);
+  box-shadow: none;
+}
+.spcv.has-colour .cv-node-dot[data-s="needs"] {
+  background: var(--needs);
+  box-shadow: none;
+}
+
+/* ---------- recency: the latest is marked, the rest fade by age ---------- */
+
+.cv-win-latest {
+  flex: none;
+  color: var(--fg-3);
+  font-size: 12px;
+  font-weight: 400;
+}
+.cv-win-latest[hidden] {
+  display: none;
+}
+.cv-win.is-latest {
+  --cv-border: var(--fg-3);
+}
+.cv-win[data-age="1"] {
+  --cv-age: 0.9;
+}
+.cv-win[data-age="2"] {
+  --cv-age: 0.7;
+}
+.cv-win[data-age="3"] {
+  --cv-age: 0.55;
+}
+.cv-win[data-age="4"] {
+  --cv-age: 0.45;
+}
+.spcv .cv-win[data-age]:not(.is-needs):not(.is-hit):not(:focus-visible) {
+  border-color: color-mix(in oklab, var(--cv-border) calc(var(--cv-age) * 100%), var(--bg));
+}
+.spcv .cv-win[data-age] .cv-win-title,
+.spcv .cv-win[data-age] .cv-win-meta {
+  opacity: var(--cv-age);
+}
+.spcv[data-scheme="light"] .cv-win[data-age]:not(.is-needs):not(.is-hit):not(:focus-visible) {
+  --cv-border: var(--line-2);
+}
+.spcv[data-scheme="light"] .cv-win.is-latest {
+  --cv-border: var(--fg-3);
+}
+
+/* ---------- the legend ---------- */
+
+.cv-legend {
+  position: absolute;
+  top: calc(var(--cv-edge) + 40px);
+  left: var(--cv-edge);
+  display: inline-flex;
+  align-items: center;
+  gap: 14px;
+  height: 28px;
+  padding: 0 4px 0 12px;
+  background: var(--cv-panel);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  color: var(--fg-2);
+  font-size: 12px;
+  z-index: 3;
+  white-space: nowrap;
+}
+.cv-legend[hidden] {
+  display: none;
+}
+.cv-legend-i {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.cv-legend-s {
+  width: 10px;
+  height: 10px;
+  border-radius: 2px;
+  box-sizing: border-box;
+  border: 1px solid var(--fg-4);
+}
+.cv-legend-s.is-working {
+  border-color: var(--state-working);
+  background: var(--state-working-bg);
+  box-shadow: inset 2px 0 0 var(--state-working);
+}
+.cv-legend-s.is-needs {
+  border-color: var(--needs);
+  box-shadow: inset 2px 0 0 var(--needs);
+}
+.cv-legend-s.is-stale {
+  border-style: dashed;
+  border-color: var(--state-stale);
+  box-shadow: inset 2px 0 0 var(--state-stale);
+}
+.cv-legend-t {
+  color: var(--fg-4);
+}
+.cv-legend-x {
+  width: 22px;
+  height: 22px;
+  border: 0;
+  background: transparent;
+  color: var(--fg-4);
+  font: 14px / 1 var(--cv-font);
+  cursor: pointer;
+  border-radius: 4px;
+}
+.cv-legend-x:hover {
+  color: var(--fg);
+  background: var(--cv-tint);
+}
+.spcv.has-legend .cv-status {
+  top: calc(var(--cv-edge) + 74px);
 }

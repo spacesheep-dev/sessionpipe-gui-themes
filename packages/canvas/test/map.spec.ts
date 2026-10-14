@@ -351,3 +351,154 @@ test("ten repos and a stale layout: every node inside its lane, lanes wrap, Fit 
     })
     .toBeLessThan(1400);
 });
+
+test("colour: each state wears its own rule, tint and dot; the toggle takes it all away", async ({ page }) => {
+  await open(page, SMALL);
+  await expect(page.locator(".spcv")).toHaveClass(/has-colour/);
+  await expect(page.locator(".cv-btn:has-text('Colour')")).toHaveClass(/is-on/);
+  const styles = async () =>
+    page.evaluate(() => {
+      const pick = (state: string) =>
+        document.querySelector(`.cv-win[data-state="${state}"]:not(.is-sub)`) as HTMLElement;
+      const read = (w: HTMLElement) => ({
+        rule: getComputedStyle(w).boxShadow,
+        bar: getComputedStyle(w.querySelector(".cv-win-bar")!).backgroundColor,
+        dot: getComputedStyle(w.querySelector(".cv-dot")!).backgroundColor,
+        border: getComputedStyle(w).borderTopStyle,
+        body: getComputedStyle(w.querySelector(".cv-win-body")!).opacity,
+        now: getComputedStyle(w.querySelector(".cv-win-now-l")!).color,
+      });
+      const working = read(pick("working"));
+      const idle = read(pick("idle"));
+      const needs = read(pick("needs_you"));
+      return { working, idle, needs };
+    });
+  const on = await styles();
+  expect(on.working.rule).toContain("inset");
+  expect(on.needs.rule).toContain("inset");
+  expect(on.idle.rule).not.toContain("inset");
+  expect(on.working.bar).not.toBe(on.idle.bar);
+  expect(on.working.dot).not.toBe(on.idle.dot);
+  expect(on.working.now).not.toBe(on.idle.now);
+  // A stale one: dashed, body at 70 %.
+  const key = (await page.locator('.cv-win[data-state="working"]:not(.is-sub)').first().getAttribute("data-key"))!;
+  await page.evaluate((k) => window.__harness.world.age(k, 12 * 60_000), key);
+  await page.evaluate((k) => {
+    const s = window.__harness.sessions().find((x) => x.key === k)!;
+    (s as { state: string }).state = "stale";
+    window.__harness.world.onChange();
+  }, key);
+  const stale = page.locator(`.cv-win[data-key="${key}"]`);
+  await expect(stale).toHaveAttribute("data-state", "stale");
+  expect(await stale.evaluate((w) => getComputedStyle(w).borderTopStyle)).toBe("dashed");
+  expect(await stale.locator(".cv-win-body").evaluate((b) => getComputedStyle(b).opacity)).toBe("0.7");
+  // Off: grey again.
+  await page.click(".cv-btn:has-text('Colour')");
+  await expect(page.locator(".spcv")).not.toHaveClass(/has-colour/);
+  const off = await styles();
+  expect(off.working.rule).not.toContain("inset");
+  expect(off.working.bar).toBe(off.idle.bar);
+  expect(off.working.dot).not.toBe(on.working.dot);
+  expect(off.working.now).not.toBe(on.working.now);
+  expect(await stale.evaluate((w) => getComputedStyle(w).borderTopStyle)).toBe("solid");
+  await expect.poll(() => page.evaluate(() => window.__harness.local.get("colour"))).toBe(false);
+});
+
+test("recency: the latest window is marked and the mark moves; old windows fade by bucket", async ({ page }) => {
+  await open(page, SMALL);
+  await expect(page.locator(".cv-win.is-latest")).toHaveCount(1);
+  await expect(page.locator(".cv-win.is-latest .cv-win-latest")).toHaveText("latest");
+  const other = page.locator('.cv-win[data-state="idle"]:not(.is-sub)').first();
+  const key = (await other.getAttribute("data-key"))!;
+  await page.evaluate((k) => window.__harness.world.touch(k), key);
+  await expect(page.locator(`.cv-win[data-key="${key}"]`)).toHaveClass(/is-latest/);
+  await expect(page.locator(".cv-win.is-latest")).toHaveCount(1);
+  // Six hours old: the last bucket, border and title faded, body text not.
+  const old = (await page.locator('.cv-win[data-state="working"]:not(.is-sub)').first().getAttribute("data-key"))!;
+  await page.evaluate((k) => window.__harness.world.age(k, 7 * 3600_000), old);
+  const w = page.locator(`.cv-win[data-key="${old}"]`);
+  await expect(w).toHaveAttribute("data-age", "4");
+  expect(await w.locator(".cv-win-title").evaluate((t) => getComputedStyle(t).opacity)).toBe("0.45");
+  expect(await w.locator(".cv-win-text").evaluate((t) => getComputedStyle(t).opacity)).toBe("1");
+  // Fresh again: bucket 0.
+  await page.evaluate((k) => window.__harness.world.touch(k), old);
+  await expect(w).toHaveAttribute("data-age", "0");
+  // `?` shows the legend.
+  await page.keyboard.press("?");
+  await expect(page.locator(".cv-legend")).toBeVisible();
+  await expect(page.locator(".cv-legend")).toContainText("needs you");
+});
+
+test("map: a machine's dot takes the strongest state of its sessions", async ({ page }) => {
+  await open(page, SMALL);
+  await mapOn(page);
+  const dot = (m: string) => page.locator(`.cv-node[data-id="machine:${m}"] .cv-node-dot`);
+  await expect(dot("misha-air")).toHaveAttribute("data-s", "needs");
+  await expect(dot("studio")).toHaveAttribute("data-s", "working");
+  const needsKey = (await page.locator('.cv-win[data-state="needs_you"]').first().getAttribute("data-key"))!;
+  await page.evaluate((k) => window.__harness.world.clear(k), needsKey);
+  await expect(dot("misha-air")).toHaveAttribute("data-s", "working");
+  const teal = await dot("studio").evaluate((d) => getComputedStyle(d).backgroundColor);
+  await page.click(".cv-btn:has-text('Colour')");
+  expect(await dot("studio").evaluate((d) => getComputedStyle(d).backgroundColor)).not.toBe(teal);
+});
+
+test("edges: one trunk per target, hidden until hover by default, repos ordered by the windows", async ({ page }) => {
+  await open(page, `${SMALL}&repos=4`);
+  await page.click(".cv-btn:has-text('Tidy')");
+  await page.waitForTimeout(400);
+  await mapOn(page);
+  await expect(page.locator(".cv-lines")).toHaveText("Lines · hovered");
+  // Hovered mode: nothing drawn until something is hovered.
+  expect(await page.locator(".cv-edge-session:visible").count()).toBe(0);
+  expect(await page.locator(".cv-trunk:visible").count()).toBe(0);
+  await page.hover('.cv-node[data-id="machine:misha-air"]');
+  await expect.poll(() => page.locator(".cv-edge.is-lit:visible").count()).toBeGreaterThan(0);
+  await expect(page.locator('.cv-trunk.is-lit[data-b="machine:misha-air"]')).toHaveCount(1);
+  await page.mouse.move(5, 500);
+  // All: one trunk per machine, every session edge ends on its bus (3 segments, no diagonals).
+  await page.click(".cv-lines");
+  await expect(page.locator(".cv-lines")).toHaveText("Lines · all");
+  await expect(page.locator('.cv-trunk[data-b="machine:misha-air"]')).toHaveCount(1);
+  const sessionsOnAir = await page.locator('.cv-edge-session[data-b="machine:misha-air"]').count();
+  expect(sessionsOnAir).toBeGreaterThan(1);
+  const shapes = await page.evaluate(() =>
+    [...document.querySelectorAll<SVGPathElement>(".cv-edge-session")].map((p) => p.getAttribute("d")!),
+  );
+  for (const d of shapes) expect(d).toMatch(/^M[-\d.]+,[-\d.]+ L[-\d.]+,[-\d.]+ Q/); // down, then a rounded turn onto the bus
+  await expect.poll(() => page.evaluate(() => window.__harness.local.get("lines"))).toBe("all");
+  // Repo nodes follow the x of the windows they connect to.
+  const order = await page.evaluate(() => {
+    const wins = new Map<string, number>();
+    for (const w of document.querySelectorAll<HTMLElement>(".cv-win:not(.is-sub)")) {
+      const r = w.getBoundingClientRect();
+      wins.set(`win:${w.dataset.key}`, r.x + r.width / 2);
+    }
+    const bary = new Map<string, number[]>();
+    for (const e of document.querySelectorAll<SVGPathElement>('.cv-edge-session[data-b^="repo:"]')) {
+      const x = wins.get(e.dataset.a!);
+      if (x === undefined) continue;
+      bary.set(e.dataset.b!, [...(bary.get(e.dataset.b!) ?? []), x]);
+    }
+    const nodes = [...document.querySelectorAll<HTMLElement>('.cv-node[data-kind="repo"]')]
+      .map((n) => ({ id: n.dataset.id!, x: n.getBoundingClientRect().x, y: n.getBoundingClientRect().y }))
+      .filter((n) => bary.has(n.id));
+    const rows = new Map<number, typeof nodes>();
+    for (const n of nodes) rows.set(Math.round(n.y), [...(rows.get(Math.round(n.y)) ?? []), n]);
+    const sorted: boolean[] = [];
+    for (const row of rows.values()) {
+      row.sort((a, b) => a.x - b.x);
+      const means = row.map((n) => bary.get(n.id)!.reduce((a, b) => a + b, 0) / bary.get(n.id)!.length);
+      sorted.push(means.every((m, i) => i === 0 || m >= means[i - 1]! - 1));
+    }
+    return { rows: sorted, repos: nodes.length };
+  });
+  expect(order.repos).toBeGreaterThan(2);
+  expect(order.rows.every(Boolean)).toBe(true);
+  // None.
+  await page.click(".cv-lines");
+  await expect(page.locator(".cv-lines")).toHaveText("Lines · none");
+  await page.hover('.cv-node[data-id="machine:misha-air"]');
+  await page.waitForTimeout(100);
+  expect(await page.locator(".cv-edge-session:visible").count()).toBe(0);
+});

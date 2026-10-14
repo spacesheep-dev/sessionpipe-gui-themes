@@ -65,6 +65,8 @@ export class WinView {
   private footLeft: HTMLElement;
   private footRight: HTMLElement;
   private kids: HTMLButtonElement;
+  private latest: HTMLElement;
+  private ageBucket = -1;
   /** What the elapsed numeral counts from, if anything. */
   private since: number | undefined;
   private sincePrefix = "";
@@ -97,6 +99,8 @@ export class WinView {
       e.stopPropagation();
       this.hooks.onOpen();
     });
+    this.latest = el("span", "cv-win-latest", "latest");
+    this.latest.hidden = true;
     const close = el("button", "cv-win-close", "×");
     close.type = "button";
     close.title = "Hide until it changes state";
@@ -105,7 +109,7 @@ export class WinView {
       e.stopPropagation();
       this.hooks.onClose();
     });
-    this.bar.append(this.dot, this.title, this.meta, open, close);
+    this.bar.append(this.dot, this.title, this.meta, this.latest, open, close);
 
     this.body = el("div", "cv-win-body");
     this.now = el("div", "cv-win-now");
@@ -375,6 +379,21 @@ export class WinView {
       }),
     );
     this.acts.hidden = acts.length === 0;
+  }
+
+  /** The most recently touched session on the canvas. */
+  setLatest(on: boolean) {
+    if (this.latest.hidden === !on) return;
+    this.latest.hidden = !on;
+    setClass(this.el, "is-latest", on);
+  }
+
+  /** Borders and title fade with age on a log scale; the attribute changes only when
+   *  the bucket does, so a tick costs nothing when nothing moved. */
+  setAge(bucket: number) {
+    if (bucket === this.ageBucket) return;
+    this.ageBucket = bucket;
+    this.el.dataset.age = String(bucket);
   }
 
   /** Once a second: the elapsed numeral beside the current tool or wait. */

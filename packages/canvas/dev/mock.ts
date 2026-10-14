@@ -587,6 +587,23 @@ export class World {
 
   // ---------- knobs ----------
 
+  /** Push a session's last event back in time (for the age fade). */
+  age(key: SessionKey, ms: number) {
+    const r = this.recs.get(key);
+    if (!r) return;
+    r.s.lastAt = iso(Date.now() - ms);
+    r.s.stateSince = iso(Date.now() - ms);
+    this.onChange();
+  }
+
+  /** Touch a session: a heartbeat lands and it becomes the latest. */
+  touch(key: SessionKey) {
+    const r = this.recs.get(key);
+    if (!r) return;
+    this.emit(r, "session.heartbeat", {});
+    this.onChange();
+  }
+
   keys(state?: SessionState): SessionKey[] {
     return [...this.recs.values()].filter((r) => !state || r.s.state === state).map((r) => r.s.key);
   }

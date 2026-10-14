@@ -36,6 +36,13 @@ import { WinView } from "./window";
 
 const VIEWPORT_KEY = "viewport";
 const MAP_LOCAL_KEY = "map";
+const COLOUR_LOCAL_KEY = "colour";
+const LEGEND_SEEN_KEY = "legendSeen";
+const LINES_LOCAL_KEY = "lines";
+type LinesMode = "all" | "hovered" | "none";
+const LINES_MODES: LinesMode[] = ["hovered", "all", "none"];
+/** Age buckets for the fade: under 2 min, 15 min, 1 h, 6 h, older. */
+const AGE_STEPS_MS = [2 * 60_000, 15 * 60_000, 3600_000, 6 * 3600_000];
 const SHELF_MAX = 48;
 const Z_NEEDS = 100_000;
 
@@ -50,6 +57,9 @@ class Canvas implements InputHost {
   private conn: HTMLElement;
   private zonesBtn: HTMLButtonElement;
   private mapBtn: HTMLButtonElement;
+  private colourBtn: HTMLButtonElement;
+  private linesBtn: HTMLButtonElement;
+  private legend: HTMLElement;
   private treeG: SVGGElement;
   private map: MapLayer;
   /** Sessions a start named, waiting to appear by their machine's node. */
@@ -122,6 +132,9 @@ class Canvas implements InputHost {
     btn("Fit", "Zoom to show everything (0)", () => this.fit());
     this.zonesBtn = btn("Zones", "Show machines as regions", () => this.toggleZones());
     this.mapBtn = btn("Map", "Devices, agents, machines and repos around the sessions", () => this.toggleMap());
+    this.linesBtn = btn("Lines", "Which lines the map draws: hovered · all · none", () => this.cycleLines());
+    this.linesBtn.classList.add("cv-lines");
+    this.colourBtn = btn("Colour", "Colour windows by state (? explains)", () => this.toggleColour());
     const add = btn("+", "Add a node of your own", () => this.addCustomNode());
     add.classList.add("cv-btn-add");
     add.setAttribute("aria-label", "Add a node");
@@ -137,6 +150,27 @@ class Canvas implements InputHost {
 
     this.status = el("div", "cv-status");
     this.status.setAttribute("aria-live", "polite");
+
+    // What the colours mean: shown once when colour first turns on, and on `?`.
+    this.legend = el("div", "cv-legend");
+    this.legend.hidden = true;
+    const swatch = (cls: string, text: string) => {
+      const item = el("span", "cv-legend-i");
+      item.append(el("span", `cv-legend-s ${cls}`), document.createTextNode(text));
+      return item;
+    };
+    const closeLegend = el("button", "cv-legend-x", "×");
+    closeLegend.type = "button";
+    closeLegend.setAttribute("aria-label", "Hide the legend");
+    closeLegend.addEventListener("click", () => this.showLegend(false));
+    this.legend.append(
+      swatch("is-working", "working"),
+      swatch("is-needs", "needs you"),
+      swatch("is-stale", "stale"),
+      swatch("is-idle", "idle · done"),
+      el("span", "cv-legend-t", "borders fade with age · the latest is marked"),
+      closeLegend,
+    );
 
     this.tray = el("div", "cv-tray");
     this.shelf = el("div", "cv-shelf");
@@ -157,7 +191,7 @@ class Canvas implements InputHost {
       this.jumpFromMinimap(e);
     });
 
-    this.root.append(this.world, hud, this.status, this.tray, this.shelf, this.minimap);
+    this.root.append(this.world, hud, this.legend, this.status, this.tray, this.shelf, this.minimap);
     container.append(this.root);
     if (this.root.clientHeight < 160) {
       const top = this.root.getBoundingClientRect().top;
@@ -191,6 +225,8 @@ class Canvas implements InputHost {
     }
     this.ready = true;
     setClass(this.zonesBtn, "is-on", this.layout.zonesOn);
+    this.applyColour();
+    this.applyLines();
     const fresh = !stored || Object.keys(this.layout.windows).length === 0;
     this.sync(this.api.state.get(), true);
     if (fresh && this.narrow) this.tidy(false);
@@ -317,6 +353,7 @@ class Canvas implements InputHost {
     }
     if (zChanged) this.restack();
     if (placed) this.save();
+    this.recency(now);
     this.renderTray(live);
     this.renderShelf();
     this.renderZones();
@@ -399,6 +436,84 @@ class Canvas implements InputHost {
   private tick() {
     const now = Date.now();
     for (const v of this.views.values()) v.tick(now);
+    this.recency(now);
+  }
+
+  /** The latest session gets its word; the others' borders and title fade by age bucket. */
+  private recency(now: number) {
+    let latest: WinView | undefined;
+    let latestAt = Number.NEGATIVE_INFINITY;
+    for (const v of this.views.values()) {
+      if (v.session.parentId || v.session.state === "done") continue;
+      const at = Date.parse(v.session.lastAt);
+      if (at > latestAt) {
+        latestAt = at;
+        latest = v;
+      }
+    }
+    for (const v of this.views.values()) {
+      const isLatest = v === latest;
+      v.setLatest(isLatest);
+      const age = now - Date.parse(v.session.lastAt);
+      let bucket = 0;
+      if (!isLatest && v.session.state !== "needs_you") {
+        while (bucket < AGE_STEPS_MS.length && age >= AGE_STEPS_MS[bucket]!) bucket++;
+      }
+      v.setAge(bucket);
+    }
+  }
+
+  // ---------- colour and lines ----------
+
+  private get colourOn(): boolean {
+    return this.api.local.get<boolean>(COLOUR_LOCAL_KEY) ?? true;
+  }
+
+  private toggleColour() {
+    const on = !this.colourOn;
+    this.api.local.set(COLOUR_LOCAL_KEY, on);
+    this.applyColour();
+    if (on && !this.api.local.get<boolean>(LEGEND_SEEN_KEY)) {
+      this.api.local.set(LEGEND_SEEN_KEY, true);
+      this.showLegend(true);
+    }
+    if (!on) this.showLegend(false);
+  }
+
+  private applyColour() {
+    const on = this.colourOn;
+    setClass(this.root, "has-colour", on);
+    setClass(this.colourBtn, "is-on", on);
+  }
+
+  showLegend(on: boolean) {
+    this.legend.hidden = !on;
+    setClass(this.root, "has-legend", on);
+  }
+
+  get legendShown() {
+    return !this.legend.hidden;
+  }
+
+  toggleLegend() {
+    this.showLegend(!this.legendShown);
+  }
+
+  private get linesMode(): LinesMode {
+    const m = this.api.local.get<LinesMode>(LINES_LOCAL_KEY);
+    return m && LINES_MODES.includes(m) ? m : "hovered";
+  }
+
+  private cycleLines() {
+    const next = LINES_MODES[(LINES_MODES.indexOf(this.linesMode) + 1) % LINES_MODES.length]!;
+    this.api.local.set(LINES_LOCAL_KEY, next);
+    this.applyLines();
+  }
+
+  private applyLines() {
+    const mode = this.linesMode;
+    for (const m of LINES_MODES) setClass(this.root, `lines-${m}`, m === mode);
+    setText(this.linesBtn, `Lines · ${mode}`);
   }
 
   // ---------- geometry ----------
@@ -871,7 +986,7 @@ class Canvas implements InputHost {
 
   tidy(animate = true) {
     const sessions = [...this.snapshot.sessions.values()].filter((s) => this.views.has(s.key));
-    const r = tidy(sessions, (k) => this.pos(k), this.layout.zonesOn && !this.narrow, this.narrow);
+    const r = tidy(sessions, (k) => this.pos(k), (this.layout.zonesOn || this.mapOn) && !this.narrow, this.narrow);
     if (this.motion && animate) {
       this.winsEl.classList.add("is-tidying");
       setTimeout(() => this.winsEl.classList.remove("is-tidying"), 400);
@@ -1030,7 +1145,7 @@ class Canvas implements InputHost {
   hit(target: EventTarget | null): Hit {
     const t = target as Element | null;
     if (!t || !(t instanceof Element)) return { kind: "canvas" };
-    if (t.closest(".cv-hud, .cv-tray, .cv-shelf, .cv-minimap, .cv-status")) return { kind: "ui" };
+    if (t.closest(".cv-hud, .cv-tray, .cv-shelf, .cv-minimap, .cv-status, .cv-legend")) return { kind: "ui" };
     const win = t.closest(".cv-win") as HTMLElement | null;
     if (win) {
       const key = win.dataset.key!;
