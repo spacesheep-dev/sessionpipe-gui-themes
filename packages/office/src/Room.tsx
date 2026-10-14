@@ -1,18 +1,19 @@
 // SPDX-License-Identifier: Apache-2.0
-// A room is a machine: nameplate above, then the floor. In the iso style the floor is a
-// plate with desks in columns and rows (slot 0 at the back-left; one plate per pair of
-// desks on a phone). In the figures style it is pods of two desks in rows with a window
-// band across the back wall and a door in the front wall (DESIGN.md §1, §14).
+// A room is a machine: nameplate above, then the floor, laid out from the width the room
+// was given (layout.ts). Iso: a plate with desks in columns and rows (slot 0 at the
+// back-left), or under 700 px a list of desks with their nameplates beside them. Figures:
+// 150 px cells in rows with a window band across the back wall and a door in the front
+// wall (DESIGN.md §1, §14). Slots are stable, so a reflow only moves desks.
 import type { MachineSummary, SessionSummary } from "@sessionpipe-gui/theme-types/api";
 import type { CSSProperties } from "react";
 import { NavLink } from "./bits";
 import { harnessMark } from "./format";
-import { IsoPlate } from "./IsoRoom";
+import { IsoList, IsoPlate } from "./IsoRoom";
 import { layout } from "./iso";
-import { CELL_H, CELL_W } from "./parts";
+import { FIG, type FiguresFit, figuresCellLeft, figuresRoomWidth, type IsoFit } from "./layout";
+import { CELL_H } from "./parts";
 import type { HourBand, Posture } from "./posture";
-import type { OfficeStyle } from "./style";
-import { Cell, type CellPos, cellLeft, DOOR_X, EmptyDesk, PAD, POD_GAP } from "./Worker";
+import { Cell, type CellPos, DOOR_X, EmptyDesk } from "./Worker";
 
 export interface RoomCell {
   s: SessionSummary;
@@ -24,7 +25,7 @@ export interface RoomCell {
   helperBase?: number;
 }
 
-const FIG = { aisle: 12, rowGap: 24, top: 14 };
+export type RoomFit = { kind: "iso"; fit: IsoFit } | { kind: "figures"; fit: FiguresFit };
 
 export function Room({
   name,
@@ -35,21 +36,19 @@ export function Room({
   gone,
   band,
   now,
-  narrow,
-  style,
+  fit,
   cursor = -1,
 }: {
   name: string;
   machine?: MachineSummary;
   cells: RoomCell[];
-  /** Desks per row: pod columns in iso, two per pod in figures. */
+  /** Desks per row, from the width (layout.ts). */
   perRow: number;
   rows: number;
   gone: number;
   band: HourBand;
   now: number;
-  narrow: boolean;
-  style: OfficeStyle;
+  fit: RoomFit;
   cursor?: number;
 }) {
   const capacity = perRow * rows;
@@ -80,66 +79,47 @@ export function Room({
       {hidden > 0 && <span className="room-more">+{hidden} more</span>}
     </NavLink>
   );
+  const label = `${name}: ${cells.length} at desks`;
 
-  if (style === "iso") {
-    // a phone gets one plate per pair of desks (one column, two rows); a desktop one plate
-    const plates: { l: ReturnType<typeof layout>; cells: RoomCell[]; empties: number[] }[] = [];
-    if (narrow) {
-      const count = Math.max(
-        1,
-        Math.ceil(Math.max(2, ...shown.map((c) => c.slot + 1), ...empties.map((e) => e + 1)) / 2),
+  if (fit.kind === "iso") {
+    if (fit.fit.mode === "list")
+      return (
+        <section className="room room--iso room--list" aria-label={label}>
+          {plate}
+          <IsoList cells={shown} empties={empties} now={now} cursor={cursor} tally={gone} />
+        </section>
       );
-      for (let i = 0; i < count; i++) {
-        plates.push({
-          l: layout(1, 2),
-          cells: shown.filter((c) => Math.floor(c.slot / 2) === i).map((c) => ({ ...c, slot: c.slot % 2 })),
-          empties: empties.filter((e) => Math.floor(e / 2) === i).map((e) => e % 2),
-        });
-      }
-    } else {
-      plates.push({ l: layout(perRow, Math.max(rows, Math.ceil(2 / perRow))), cells: shown, empties });
-    }
+    const l = layout(perRow, Math.max(rows, Math.ceil(2 / perRow)));
     return (
-      <section className="room room--iso" aria-label={`${name}: ${cells.length} at desks`}>
+      <section className="room room--iso" style={{ "--o-scale": fit.fit.scale } as CSSProperties} aria-label={label}>
         {plate}
-        {plates.map((pl, i) => (
-          <IsoPlate
-            key={i}
-            l={pl.l}
-            cells={pl.cells}
-            empties={pl.empties}
-            now={now}
-            cursor={cursor}
-            tally={i === plates.length - 1 ? gone : undefined}
-          />
-        ))}
+        <IsoPlate l={l} cells={shown} empties={empties} now={now} cursor={cursor} tally={gone} />
       </section>
     );
   }
 
+  // figures: uniform cells; positions in logical px, the CSS multiplies by --o-scale
+  const f = fit.fit;
+  // the back row fills first, so a partial row is the front one
   const posOf = (slot: number): CellPos => {
-    const pod = Math.floor((slot % perRow) / 2);
-    const side = (slot % 2) as 0 | 1;
+    const col = slot % perRow;
     const row = Math.floor(slot / perRow);
-    const bottom = FIG.aisle + row * (CELL_H + FIG.rowGap);
-    return {
-      side,
-      left: cellLeft(pod, side),
-      bottom,
-      doorX: DOOR_X,
-      aisleX: PAD + pod * (2 * CELL_W + POD_GAP) - 8,
-      aisleY: CELL_H + bottom - FIG.aisle / 2,
-    };
+    const left = figuresCellLeft(f, col) / f.scale;
+    const bottom = FIG.aisle + (rows - 1 - row) * (CELL_H + FIG.rowGap);
+    return { left, bottom, doorX: DOOR_X, aisleX: left - 8, aisleY: CELL_H + bottom - FIG.aisle / 2 };
   };
-  const pods = perRow / 2;
-  const width = pods * 2 * CELL_W + (pods - 1) * POD_GAP + 2 * PAD;
+  const colsUsed = Math.min(
+    perRow,
+    Math.max(2, Math.max(0, ...shown.map((c) => c.slot + 1), ...empties.map((e) => e + 1))),
+  );
+  const width = figuresRoomWidth(f, colsUsed);
   const floorH = FIG.top + rows * CELL_H + (rows - 1) * FIG.rowGap + FIG.aisle;
 
   return (
     <section
       className="room room--figures"
-      style={{ "--room-w": `${width}px`, "--floor-h": `${floorH}px` } as CSSProperties}
-      aria-label={`${name}: ${cells.length} at desks`}
+      style={{ "--room-w": `${width}px`, "--floor-h": `${floorH}px`, "--o-scale": f.scale } as CSSProperties}
+      aria-label={label}
     >
       {plate}
       <div className={`room-box room-box--figures window--${band}`}>

@@ -5,7 +5,7 @@
 import type { ThemeApi, ThemeSnapshot } from "@sessionpipe-gui/theme-types";
 import type { SessionKey, SessionState, SessionSummary } from "@sessionpipe-gui/theme-types/api";
 import { SESSION_STATES } from "@sessionpipe-gui/theme-types/api";
-import { useMemo, useSyncExternalStore } from "react";
+import { type RefObject, useLayoutEffect, useMemo, useState, useSyncExternalStore } from "react";
 
 export function useSnapshot(api: ThemeApi): ThemeSnapshot {
   return useSyncExternalStore(api.state.subscribe, api.state.get, api.state.get);
@@ -92,6 +92,25 @@ export function useMediaQuery(query: string): boolean {
     () => mql.matches,
     () => false,
   );
+}
+
+/** The element's content-box width, measured before paint and on every resize (the host
+ *  narrows the theme root when its split panel opens). 0 until the first measure. */
+export function useContainerWidth(ref: RefObject<HTMLElement | null>): number {
+  const [width, setWidth] = useState(0);
+  useLayoutEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    const measure = () => {
+      const cs = getComputedStyle(el);
+      setWidth(Math.max(0, el.clientWidth - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight)));
+    };
+    measure();
+    const ro = new ResizeObserver(measure);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [ref]);
+  return width;
 }
 
 export function usePageHidden(): boolean {

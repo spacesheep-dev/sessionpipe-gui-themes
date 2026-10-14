@@ -19,8 +19,9 @@ Two drawing styles, switched with the control in the header and kept per device:
 
 Keyboard: `j` / `k` move through the desks, `Enter` opens the session, `?` shows the legend,
 `Esc` closes it (then goes back, as everywhere in the GUI). Hover or focus a desk for the
-tooltip. One pod per row on a phone; `prefers-reduced-motion` turns the walks into fades and
-stops the typing.
+tooltip. Both styles lay out from the width they are given (the split panel, a phone), the
+iso room becoming a list of desks under 700 px; `prefers-reduced-motion` turns the walks into
+fades and stops the typing.
 
 ## Install
 

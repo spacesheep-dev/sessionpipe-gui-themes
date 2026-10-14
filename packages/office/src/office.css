@@ -168,22 +168,13 @@
 
 /* ---------- room ---------- */
 
+/* --o-scale is set inline by the room from the width it measured (layout.ts) */
 .sp-office .room {
   --o-scale: 1;
   display: flex;
   flex-direction: column;
   gap: 6px;
   max-width: 100%;
-}
-@media (min-width: 1024px) {
-  .sp-office .room {
-    --o-scale: 1.25;
-  }
-}
-@media (min-width: 1700px) {
-  .sp-office .room {
-    --o-scale: 1.4;
-  }
 }
 .sp-office .room-plate {
   display: flex;
@@ -227,7 +218,7 @@
 
 .sp-office .room-box {
   position: relative;
-  width: calc(var(--room-w) * var(--o-scale));
+  width: var(--room-w);
   max-width: 100%;
   border: 1px solid var(--line-2);
   background: var(--bg-2);
@@ -336,10 +327,11 @@
 
 .sp-office .cell {
   position: absolute;
-  left: calc(var(--left) * var(--o-scale));
-  bottom: calc(var(--bottom) * var(--o-scale));
-  width: calc(160px * var(--o-scale));
+  left: 0;
+  bottom: 0;
+  width: calc(150px * var(--o-scale));
   height: calc(var(--ch) * var(--o-scale));
+  transform: translate(calc(var(--left) * var(--o-scale)), calc(var(--bottom) * var(--o-scale) * -1));
 }
 .sp-office .cell--figures {
   --ch: 120px;
@@ -381,7 +373,7 @@
   position: absolute;
   left: 4px;
   top: calc(var(--plate-y) * var(--o-scale));
-  max-width: 152px;
+  max-width: 142px;
   display: flex;
   flex-direction: column;
   gap: 1px;
@@ -391,7 +383,7 @@
   display: flex;
   align-items: baseline;
   gap: 6px;
-  max-width: 152px;
+  max-width: 142px;
 }
 .sp-office .plate-title {
   display: -webkit-box;
@@ -413,7 +405,7 @@
 }
 .sp-office .plate-repo {
   display: block;
-  max-width: 152px;
+  max-width: 142px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -680,11 +672,16 @@
 }
 .sp-office .icell {
   position: absolute;
-  left: calc(var(--x) * var(--o-scale));
-  top: calc(var(--y) * var(--o-scale));
+  left: 0;
+  top: 0;
   width: calc(160px * var(--o-scale));
   height: calc(96px * var(--o-scale));
+  transform: translate(calc(var(--x) * var(--o-scale)), calc(var(--y) * var(--o-scale)));
   pointer-events: none;
+}
+/* a desk's place in the plate: CSS transform so a reflow glides */
+.sp-office .i-slot {
+  transform: translate(var(--sx), var(--sy));
 }
 .sp-office .icell-link {
   position: absolute;
@@ -762,6 +759,65 @@
 }
 .sp-office .legend-art--iso {
   --o-scale: 1;
+}
+
+/* ---------- iso: the list, one desk per row with the nameplate beside it ---------- */
+
+.sp-office .ilist {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-width: 100%;
+}
+.sp-office .ilist-row {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  border-radius: 6px;
+}
+.sp-office .ilist-link {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  padding: 2px 6px 2px 0;
+  border-radius: 6px;
+}
+.sp-office .ilist-row:focus-within .ilist-link,
+.sp-office .ilist-row[data-cursor] .ilist-link {
+  outline: 2px solid var(--focus);
+}
+.sp-office .ilist-art {
+  flex: none;
+  display: block;
+  overflow: visible;
+}
+.sp-office .ilist .cell-plate {
+  position: static;
+  max-width: 210px;
+}
+.sp-office .ilist .plate-row,
+.sp-office .ilist .plate-repo {
+  max-width: 210px;
+}
+.sp-office .ilist .cell-bubble {
+  left: 62px;
+  top: 14px;
+}
+.sp-office .ilist .cell-tip {
+  top: 100%;
+  left: 150px;
+}
+.sp-office .ilist-row:hover .cell-tip,
+.sp-office .ilist-row:focus-within .cell-tip {
+  visibility: visible;
+  transition: visibility 0s 150ms;
+}
+.sp-office .ilist-home {
+  padding: 4px 0 0 150px;
+  font-size: 11px;
+  color: var(--fg-3);
 }
 
 /* ---------- tooltip ---------- */
@@ -1028,6 +1084,12 @@
   .sp-office .cell--arriving .legs-b,
   .sp-office .cell--leaving .legs-b {
     animation: o-legs-b 500ms steps(2, jump-none) infinite;
+  }
+  /* a reflow after a resize glides; the seat order never changes */
+  .sp-office .cell,
+  .sp-office .icell,
+  .sp-office .i-slot {
+    transition: transform 300ms var(--ease-out);
   }
   /* iso */
   .sp-office .i-person--typing {

@@ -8,6 +8,7 @@ const R = () => globalThis.__sessionpipeThemeReact.React;
 
 export const useState = (...a) => R().useState(...a);
 export const useEffect = (...a) => R().useEffect(...a);
+export const useLayoutEffect = (...a) => R().useLayoutEffect(...a);
 export const useMemo = (...a) => R().useMemo(...a);
 export const useRef = (...a) => R().useRef(...a);
 export const useCallback = (...a) => R().useCallback(...a);

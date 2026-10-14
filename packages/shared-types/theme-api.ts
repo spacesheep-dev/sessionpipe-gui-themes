@@ -150,6 +150,9 @@ export interface ThemeApi {
     repoBranch(session: SessionSummary): string;
     /** "Cl" for claude-code, "Cx" for codex, … */
     monogram(harness: string): string;
+    /** The harness's monochrome mark as inline SVG (currentColor) with its human name,
+     *  "Claude Code"; null for a harness without one (draw the monogram then). */
+    harnessIcon?(harness: string): { svg: string; name: string } | null;
   };
 }
 

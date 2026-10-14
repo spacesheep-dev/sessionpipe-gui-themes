@@ -294,13 +294,20 @@ tone, and nothing coloured but the amber under someone who needs you.
               ╲  ╱
 ```
 
+- **Width** (`layout.ts`): both styles lay out from the theme root's measured width
+  (`ResizeObserver`; the host narrows it for the split panel), never the viewport. Iso
+  picks the widest plate that fits, 1.25× before 1×, four columns before two, never more
+  columns than half the desks; under 700 px (or when no plate fits) the room is a list,
+  one desk on a small tile per row with the nameplate beside it. Figures picks the
+  largest of 1.4 / 1.25 / 1 that seats three abreast, then as many 150 px cells (16 px
+  apart) as fit. Rows are added as desks come; the page scrolls. Slots are stable, so a
+  resize only moves desks, with a 300 ms transform transition (none under reduced motion).
 - **Grid** (`iso.ts`): a cell is a diamond 40 × 20 px at scale 1 (`K = 20`); world `(u, v, h)`
   → screen `((u − v)·K, (u + v)·K/2 − h)`. Desk slots sit at `u = 1 + col·8`, `v = 1 + row·3`,
-  slot 0 at the back; columns fill by threes (`cols = min(3, ⌈n/3⌉)`), rows as needed.
+  slot 0 at the back, rows as needed.
   The plate is `cols·8 × (rows·3 + 1.5)` cells: one cell of margin at the back, the
   nameplates' footprint at the front, 6 px walls on the two back edges with a one-cell
-  door gap near the right corner; the tally stands outside it. On a phone every pair of
-  desks gets its own plate (one column, two rows), 320 px wide.
+  door gap near the right corner; the tally stands outside it.
 - **Painter's order**: desks by `u + v`; within a desk: box, monogram, monitor, screen,
   pool, chair seat, person, chair back, stander, helpers.
 - **Desk**: box 2 × 1 × 14, top `--o-top`, left face `--o-side`, right face `--o-side2`;

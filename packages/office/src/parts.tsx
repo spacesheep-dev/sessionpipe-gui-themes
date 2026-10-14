@@ -6,7 +6,7 @@
 // cell: furniture (--o-top, --o-edge, --o-wood, --o-chair) and the look (--look-shirt,
 // --look-hair, --look-skin, --look-trouser).
 
-export const CELL_W = 160;
+export const CELL_W = 150;
 export const CELL_H = 120;
 /** The seated figure's head centre and the standing figure's feet, desk coordinates. */
 export const HEAD = { x: 48, y: 44 };

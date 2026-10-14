@@ -10,15 +10,13 @@ import { ATTENTION_LABEL, durShort, harnessMark, modelShort, STATE_LABEL, since 
 import { CELL_H, CELL_W, FEET, HEAD } from "./parts";
 import { cutLeft, derivePosture, type Look, type Posture, screenText } from "./posture";
 
-export const PAD = 12;
-export const POD_GAP = 16;
 /** The door's centre line in room coordinates (an 18 px gap at x = 16). */
 export const DOOR_X = 16 + 9;
 const TITLE_LINE = 26;
 
-/** Where a cell sits in its room, and where its walker enters: all in logical px. */
+/** Where a cell sits in its room, and where its walker enters: all in logical px (the
+ *  room's --o-scale multiplies on the way to the page). */
 export interface CellPos {
-  side: 0 | 1;
   left: number;
   bottom: number;
   /** The door's x and the pod's aisle x, room coordinates. */
@@ -28,10 +26,9 @@ export interface CellPos {
   aisleY: number;
 }
 
-/** The two desks of a pod touch: the left cell's desk sits at its right edge, the right
- *  cell's at its left; side tables go to the pod's outer side. */
-export const deskShift = (side: number) => (side === 0 ? 60 : 4);
-export const cellLeft = (pod: number, side: number) => PAD + pod * (2 * CELL_W + POD_GAP) + side * CELL_W;
+/** The desk sits 8 px into its 150 px cell; the side table takes the room to its right. */
+const DESK_X = 8;
+const SIDE_SHIFT = 112 - 118 - DESK_X;
 
 const plural = (n: number, word: string) => (n ? `${n} ${word}${n === 1 ? "" : "s"}` : "");
 const lookClass = (l: Look) => `look-s${l.shirt % 3} look-k${l.skin}`;
@@ -56,8 +53,8 @@ export function Cell({ s, p, slot, pos, now, walk, cursor, helperCursor }: CellP
   const api = useApi();
   const title = api.format.title(s);
   const mark = harnessMark(s.harness);
-  const dxDesk = deskShift(pos.side);
-  const sideShift = (pos.side === 0 ? 20 : 108) - 118;
+  const dxDesk = DESK_X;
+  const sideShift = SIDE_SHIFT;
   const feetX = pos.left + dxDesk + FEET.x;
   const style = {
     "--left": `${pos.left}px`,
@@ -414,7 +411,7 @@ export function EmptyDesk({ pos }: { pos: CellPos }) {
   return (
     <div className="cell cell--figures cell--empty" style={style} aria-hidden="true">
       <svg className="cell-art" viewBox={`0 0 ${CELL_W} ${CELL_H}`} width={CELL_W} height={CELL_H} aria-hidden="true">
-        <g transform={`translate(${deskShift(pos.side)} 0)`}>
+        <g transform={`translate(${DESK_X} 0)`}>
           <use href="#o-desk" />
           <use href="#o-monitor" />
           <rect className="cell-screen cell-screen--off" x="36" y="15" width="24" height="16" />

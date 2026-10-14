@@ -313,7 +313,7 @@ export function IsoOverlay({ s, p, at, now, cursor, helperCursor }: IsoOverlayPr
 
 const HELPER_HIT = { w: 30, h: 36 };
 
-function IsoHelperLink({
+export function IsoHelperLink({
   c,
   at,
   i,

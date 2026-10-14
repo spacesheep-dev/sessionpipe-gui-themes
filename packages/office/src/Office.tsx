@@ -7,24 +7,28 @@ import type { ThemeApi } from "@sessionpipe-gui/theme-types";
 import type { SessionKey, SessionSummary } from "@sessionpipe-gui/theme-types/api";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { NavLink, Segmented } from "./bits";
-import { useMediaQuery, useNow, usePageHidden, useSessionTree, useSnapshot } from "./hooks";
+import { useContainerWidth, useNow, usePageHidden, useSessionTree, useSnapshot } from "./hooks";
 import { IsoDefs } from "./IsoCell";
-import { MAX_COLS } from "./iso";
 import { useListNav } from "./keys";
 import { Legend } from "./Legend";
+import { figuresFit, isoFit } from "./layout";
 import { OfficeDefs } from "./parts";
 import { derivePosture, hourBand, MAX_TYPING, type Phase, type Posture, reserveWalk, useSeating } from "./posture";
-import { Room, type RoomCell } from "./Room";
+import { Room, type RoomCell, type RoomFit } from "./Room";
 import { type OfficeStyle, useOfficeStyle } from "./style";
 
 const UNNAMED = "unnamed";
 const ARRIVE_MS = 1800;
 const LEAVE_MS = 1300;
-const MAX_ROWS: Record<OfficeStyle, number> = { iso: 6, figures: 3 };
-const MAX_PODS = 3;
+/** Rows are added as desks come; past this the room label says "+n more". */
+const MAX_ROWS = 40;
 const CHAIR_MS = 30 * 60_000;
 
 const roomOf = (s: SessionSummary) => s.machine || UNNAMED;
+
+const roomFit = (style: OfficeStyle, width: number, desks: number): RoomFit =>
+  style === "iso" ? { kind: "iso", fit: isoFit(width, desks) } : { kind: "figures", fit: figuresFit(width, desks) };
+const fitCols = (f: RoomFit) => (f.kind === "iso" ? (f.fit.mode === "plate" ? f.fit.cols : 1) : f.fit.cols);
 const endedAt = (s: SessionSummary) => Date.parse(s.endedAt ?? s.stateSince);
 
 /** Sessions that just left the live set, kept for the walk out. */
@@ -59,7 +63,9 @@ export function Office({ api }: { api: ThemeApi }) {
   const { machines, connection, scheme } = snap;
   const { roots, childrenOf, all } = useSessionTree(snap.sessions);
   const now = useNow();
-  const narrow = useMediaQuery("(max-width: 480px)");
+  const root = useRef<HTMLDivElement>(null);
+  const measured = useContainerWidth(root);
+  const width = measured || 1200;
   const hidden = usePageHidden();
   const [legend, setLegend] = useState(false);
   const [style, setStyle] = useOfficeStyle(api);
@@ -132,15 +138,10 @@ export function Office({ api }: { api: ThemeApi }) {
     const since = midnight(now);
     const list = roomNames.map((name) => {
       const here = [...live, ...leaving.values()].filter((s) => roomOf(s) === name);
-      // desks per row: iso fills columns of three (≤ MAX_COLS), figures two desks per pod
-      const perRow = narrow
-        ? style === "iso"
-          ? 1
-          : 2
-        : style === "iso"
-          ? Math.max(1, Math.min(MAX_COLS, Math.ceil(here.length / 3)))
-          : 2 * Math.max(1, Math.min(MAX_PODS, Math.ceil(here.length / 2)));
-      const maxRows = MAX_ROWS[style];
+      // desks per row from the width the room has
+      const fit = roomFit(style, width, here.length);
+      const perRow = fitCols(fit);
+      const maxRows = MAX_ROWS;
       const held = new Set(here.map((s) => slots.get(s.key) ?? 0));
       let maxSlot = here.reduce((m, s) => Math.max(m, slots.get(s.key) ?? 0), 0);
       const recent = all
@@ -192,10 +193,10 @@ export function Office({ api }: { api: ThemeApi }) {
       const gone = all.filter(
         (s) => s.state === "done" && !s.backfilled && !s.parentId && roomOf(s) === name && endedAt(s) >= since,
       ).length;
-      return { name, machine: machines.get(name), cells, perRow, rows, gone };
+      return { name, machine: machines.get(name), cells, perRow, rows, gone, fit };
     });
     return { list, keys };
-  }, [roomNames, live, leaving, slots, postures, narrow, style, machines, all, now]);
+  }, [roomNames, live, leaving, slots, postures, width, style, machines, all, now]);
 
   const open = useCallback((key: SessionKey) => api.openSession(key), [api]);
   const { cursor } = useListNav(rooms.keys, open);
@@ -231,7 +232,7 @@ export function Office({ api }: { api: ThemeApi }) {
   if (!booted.current)
     return (
       <div className={classes} data-scheme={scheme}>
-        <div className="office">
+        <div className="office" ref={root}>
           <p className="page-note">
             {connection === "connecting" ? "Waiting for the first snapshot…" : "No connection to the receiver yet."}
           </p>
@@ -249,7 +250,7 @@ export function Office({ api }: { api: ThemeApi }) {
 
   return (
     <div className={classes} data-scheme={scheme}>
-      <div className="office">
+      <div className="office" ref={root}>
         <OfficeDefs />
         <IsoDefs />
         <svg width="0" height="0" aria-hidden="true" style={{ position: "absolute" }}>
@@ -276,7 +277,7 @@ export function Office({ api }: { api: ThemeApi }) {
         </header>
 
         {roomNames.length === 0 ? (
-          <EmptyOffice band={band} now={now} narrow={narrow} style={style} />
+          <EmptyOffice band={band} now={now} width={width} style={style} />
         ) : (
           <div className="rooms">
             {rooms.list.map((r) => (
@@ -290,8 +291,7 @@ export function Office({ api }: { api: ThemeApi }) {
                 gone={r.gone}
                 band={band}
                 now={now}
-                narrow={narrow}
-                style={style}
+                fit={r.fit}
                 cursor={cursor}
               />
             ))}
@@ -305,26 +305,27 @@ export function Office({ api }: { api: ThemeApi }) {
 function EmptyOffice({
   band,
   now,
-  narrow,
+  width,
   style,
 }: {
   band: ReturnType<typeof hourBand>;
   now: number;
-  narrow: boolean;
+  width: number;
   style: OfficeStyle;
 }) {
+  const fit = roomFit(style, width, 2);
+  const perRow = fitCols(fit);
   return (
     <div className="office-empty">
       <Room
         name="no machines yet"
         cells={[]}
-        perRow={style === "iso" ? 1 : 2}
-        rows={1}
+        perRow={perRow}
+        rows={Math.ceil(2 / perRow)}
         gone={0}
         band={band}
         now={now}
-        narrow={narrow}
-        style={style}
+        fit={fit}
       />
       <ul className="office-ways">
         <li>
