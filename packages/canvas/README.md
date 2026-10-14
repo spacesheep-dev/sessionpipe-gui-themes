@@ -20,6 +20,11 @@ and names its tool. *Stale* and *idle* are muted. *Done* windows shrink and slid
 along the bottom edge (collapsed by default; the count is on it). Subagents are small windows
 tethered to their parent by a dashed line; they follow when the parent moves.
 
+**The session tree** — a root session's subagents stand in a column to its right, each a
+small live window of its own (state dot, the tool it is on and for how long, what it is
+writing), joined by orthogonal hairlines; dragging the parent drags the tree. Subagents
+that finished fold into an "n done" chip on the parent's footer; click it to unfold them.
+
 **Detail mode** — double-click a title (two taps on a phone, or Enter on a focused window) and
 the window grows and streams the session's rows inline: tools with their input hint and
 result, turns, files, attentions, the assistant's replies. Double-click again to collapse.
@@ -31,6 +36,29 @@ machine as a faint labelled region you can drag and resize, and arranges by mach
 Shift while dragging to snap to an 8 px grid. Hidden windows wait in a tray at the bottom
 left and come back when the session changes state.
 
+**Control** — when the host can sign and carry a command to a session (`api.control`),
+the window gains a prompt line (Enter sends), Allow / Deny act in place, and a working
+session has Cancel; the message's lifecycle (queued → taken → working → delivered, with
+the reply) renders under the line the way the Session page shows it. When it cannot,
+the host's reason sits there instead, muted. Keys: `Enter` on a focused window opens its
+prompt line, `a` / `d` answer an open permission.
+
+**Map** — the Map toggle (persisted; off by default on phones) draws the infrastructure
+around the sessions in lanes, top to bottom: *devices* (browsers on this GUI, the
+current one marked "you", and the passkeys machines trust), a small *sessionpipe-gui*
+hub, *agents* (one group per harness with a chip per account, labelled by email when a
+machine's control reported it), the session windows, *machines* (online / offline / not
+paired, an amber dot when a session there needs you) and *storage* (one node per repo).
+Lines: device → hub, account → the machines it runs on, live session → its machine and
+its repo. Hover a node to light its lines and step everything else back. Lane nodes drag
+along their lane and remember where they were. **Drag an account chip onto a machine** to
+start a session there: a small form takes the folder (from the machine's allowlist) and
+the first message, and the new window appears above the machine when it acks.
+
+**Hand-drawn** — `+` adds a node of your own ("lavalier mic", "pen"), typed in place;
+drag from a node's edge handle to another node, or a window, to draw a link; Backspace
+removes the selected node or link. Both persist with the layout.
+
 **Navigation** — drag the empty canvas or scroll to pan; ctrl/⌘ + wheel or pinch to zoom
 (25 %–200 %); hold Space to pan from over a window. Keys: `0` fit, `+` / `-` zoom, arrows nudge
 the focused window (Shift for bigger steps), `/` find (matches light up, the rest dim; it pans
@@ -41,7 +69,7 @@ zoom, and the windows start as a single column.
 ## Build, dev, test
 
 ```sh
-npm run build        # esbuild → dist/index.js (~55 KB) + dist/index.css
+npm run build        # esbuild → dist/index.js (~100 KB) + dist/index.css
 npm run dev          # the harness at http://127.0.0.1:7420/harness.html
 npm run typecheck
 npm test             # Playwright: drag, snap, resize, zoom, tidy, expand, search, placement,
@@ -65,6 +93,11 @@ text only. Each window re-renders only when a signature of its session changes. 
 is a CSS background whose spacing follows the zoom. Colours are the host's tokens by name, so
 dark and light are the host's; `prefers-reduced-motion` removes the fades and slides.
 
-`src/`: `index.ts` (the canvas), `window.ts` (a window), `detail.ts` + `events.ts` (the rows),
-`input.ts` (pointer, pinch, wheel, keys), `layout.ts` (placement and tidy), `types.ts`,
-`canvas.css`.
+`src/`: `index.ts` (the canvas), `window.ts` (a window, with its control line), `detail.ts` +
+`events.ts` (the rows), `map.ts` (lanes, nodes, edges, links, the start form), `input.ts`
+(pointer, pinch, wheel, keys), `layout.ts` (placement and tidy), `types.ts`, `canvas.css`.
+
+The harness fakes `snapshot.viewers` (three browsers) and `api.control` (`misha-air`
+online with two accounts, `studio` offline; `send`/`answer`/`cancel`/`start` carry a
+message through queued → taken → delivered in about three seconds; `?control=0` removes
+the channel; `?world=small` is the map test's fixture).

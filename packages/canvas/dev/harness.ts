@@ -16,7 +16,11 @@ const scheme: "dark" | "light" =
       : "light";
 document.documentElement.dataset.theme = scheme;
 
-const world = new World({ extra: Number(q.get("extra") ?? 0), seed: Number(q.get("seed") ?? 7) });
+const world = new World({
+  extra: Number(q.get("extra") ?? 0),
+  seed: Number(q.get("seed") ?? 7),
+  small: q.get("world") === "small",
+});
 const log = document.getElementById("log")!;
 const say = (s: string) => {
   log.textContent = s;
@@ -37,9 +41,10 @@ const snap = (): ThemeSnapshot => ({
   sessions: world.sessions(),
   machines: world.machines(),
   stats: world.stats(),
-  control: [],
+  control: world.control,
   recent: world.recent.slice(0, 50),
   scheme,
+  viewers: world.viewers,
 });
 let current = snap();
 world.onChange = () => {
@@ -71,6 +76,16 @@ const api: ThemeApi = {
       world.forget(key);
     },
   },
+  control:
+    q.get("control") === "0"
+      ? undefined
+      : {
+          availability: (t) => world.availability(t),
+          send: (k, text) => world.send(k, text),
+          answer: (k, id, d, note) => world.answer(k, id, d, note),
+          cancel: (k) => world.cancel(k),
+          start: (m, o) => world.start(m, o),
+        },
   navigate: (path) => say(`navigate(${path})`),
   openSession: (key) => say(`openSession(${key})`),
   tokens: [

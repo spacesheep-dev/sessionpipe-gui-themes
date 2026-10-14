@@ -77,9 +77,9 @@
   pointer-events: none;
 }
 .cv-tether {
+  fill: none;
   stroke: var(--fg-4);
   stroke-width: 1;
-  stroke-dasharray: 2 3;
   vector-effect: non-scaling-stroke;
 }
 
@@ -251,6 +251,10 @@
   overflow: hidden;
   text-overflow: ellipsis;
 }
+.cv-win.is-muted .cv-win-now-l {
+  color: var(--fg-3);
+  font-weight: 400;
+}
 .cv-win-now.is-tool .cv-win-now-l {
   font-family: var(--cv-mono);
   font-size: 12px;
@@ -259,6 +263,10 @@
 .cv-win-now.is-writing .cv-win-now-l::after {
   content: "…";
 }
+.cv-win.is-sub[data-state="done"] .cv-win-now-l {
+  color: var(--fg-4);
+  font-weight: 400;
+}
 .cv-win.is-needs .cv-win-now.is-needs .cv-win-now-l {
   color: var(--needs);
 }
@@ -266,20 +274,16 @@
   color: var(--fg-3);
   font-size: 12px;
 }
-.cv-win.is-muted .cv-win-now-l {
-  color: var(--fg-3);
-  font-weight: 400;
-}
 
 .cv-win-text {
   flex: 1 1 auto;
   min-height: 0;
+  max-height: 5.8em;
   overflow: hidden;
-  display: -webkit-box;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 3;
   color: var(--fg-2);
   overflow-wrap: anywhere;
+  -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - 16px), transparent);
+  mask-image: linear-gradient(to bottom, #000 calc(100% - 16px), transparent);
 }
 .cv-win-text.is-live {
   color: var(--fg);
@@ -407,7 +411,7 @@
 /* expanded: the rows */
 .cv-win.is-expanded .cv-win-text {
   flex: none;
-  -webkit-line-clamp: 2;
+  max-height: 3em;
 }
 .cv-detail {
   flex: 1 1 auto;
@@ -821,4 +825,523 @@
   .spcv .cv-win.is-leaving {
     display: none;
   }
+}
+
+/* ---------- the session tree ---------- */
+
+.cv-win.is-sub[data-state="done"] {
+  color: var(--fg-4);
+}
+.cv-win.is-sub[data-state="done"] .cv-win-title {
+  color: var(--fg-3);
+  font-weight: 400;
+}
+.cv-win[data-state="done"] .cv-dot {
+  background: transparent;
+  box-shadow: inset 0 0 0 1px var(--fg-4);
+}
+.cv-win-kids {
+  flex: none;
+  height: 18px;
+  margin: 0 8px;
+  padding: 0 7px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: transparent;
+  color: var(--fg-3);
+  font: 11px / 1 var(--cv-font);
+  cursor: pointer;
+  white-space: nowrap;
+}
+.cv-win-kids:hover,
+.cv-win-kids.is-on {
+  color: var(--fg);
+  border-color: var(--line-2);
+}
+.cv-win-kids[hidden] {
+  display: none;
+}
+
+/* ---------- control: the prompt line and what was sent ---------- */
+
+.cv-win-ctl {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding-top: 8px;
+  border-top: 1px solid var(--line);
+  min-width: 0;
+}
+.cv-win-ctl[hidden],
+.cv-ctl-row[hidden],
+.cv-ctl-reason[hidden],
+.cv-ctl-acts[hidden],
+.cv-win-cancel[hidden] {
+  display: none;
+}
+.cv-ctl-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.cv-ctl-input {
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 24px;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  background: transparent;
+  color: var(--fg);
+  font: 12px / 1 var(--cv-font);
+  padding: 0 8px;
+  outline: none;
+}
+.cv-ctl-input::placeholder {
+  color: var(--fg-4);
+}
+.cv-ctl-input:focus {
+  border-color: var(--fg-3);
+}
+.cv-ctl-input:disabled {
+  color: var(--fg-4);
+}
+.cv-ctl-reason {
+  color: var(--fg-4);
+  font-size: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.cv-ctl-reason.is-err {
+  color: var(--err);
+}
+.cv-win-cancel {
+  margin-left: auto;
+  font-size: 12px;
+  color: var(--fg-3);
+}
+.cv-ctl-acts {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  font-size: 12px;
+}
+.cv-act-head {
+  display: flex;
+  gap: 8px;
+  min-width: 0;
+  white-space: nowrap;
+}
+.cv-act-kind {
+  flex: none;
+  color: var(--fg-3);
+}
+.cv-act-text {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--fg);
+}
+.cv-act-ago {
+  flex: none;
+  color: var(--fg-4);
+  font-size: 11px;
+}
+.cv-act-state {
+  color: var(--fg-3);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.cv-act-state.is-live::before {
+  content: "";
+  display: inline-block;
+  width: 5px;
+  height: 5px;
+  margin: 0 6px 1px 0;
+  border-radius: 50%;
+  background: var(--fg-3);
+  animation: cv-breathe 1.6s ease-in-out infinite;
+}
+.cv-act.is-refused .cv-act-state,
+.cv-act.is-failed .cv-act-state,
+.cv-act.is-expired .cv-act-state {
+  color: var(--err);
+}
+.cv-act-reply {
+  color: var(--fg-2);
+  padding-left: 8px;
+  border-left: 1px solid var(--line-2);
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow-wrap: anywhere;
+}
+
+/* ---------- the map: lanes, nodes, edges ---------- */
+
+.cv-lanes,
+.cv-nodes {
+  position: absolute;
+  left: 0;
+  top: 0;
+}
+.cv-lanes[hidden],
+.cv-nodes[hidden] {
+  display: none;
+}
+.cv-lane {
+  position: absolute;
+  left: 0;
+  top: 0;
+  box-sizing: border-box;
+  border-top: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
+  background: color-mix(in oklab, var(--fg) 1.5%, transparent);
+}
+.cv-lane-l {
+  position: absolute;
+  left: 12px;
+  top: 6px;
+  font-size: 11px;
+  letter-spacing: 0.02em;
+  color: var(--fg-4);
+  white-space: nowrap;
+}
+.cv-node {
+  position: absolute;
+  left: 0;
+  top: 0;
+  box-sizing: border-box;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  height: 36px;
+  padding: 0 12px;
+  border: 1px solid var(--line-2);
+  border-radius: 6px;
+  background: var(--bg-2);
+  color: var(--fg-2);
+  font-size: 13px;
+  white-space: nowrap;
+  cursor: grab;
+  outline: none;
+  will-change: transform;
+}
+.cv-node:focus-visible,
+.cv-node.is-selected {
+  border-color: var(--fg);
+}
+.cv-node-hub {
+  height: 28px;
+  padding: 0 10px;
+  font-size: 12px;
+  color: var(--fg-3);
+  border-style: dashed;
+}
+.cv-node-l {
+  color: var(--fg);
+  font-weight: 500;
+}
+.cv-node-hub .cv-node-l,
+.cv-node-custom .cv-node-l {
+  font-weight: 400;
+}
+.cv-node-s {
+  color: var(--fg-4);
+  font-size: 12px;
+}
+.cv-node.is-current .cv-node-s {
+  color: var(--fg-2);
+}
+.cv-node-dot {
+  flex: none;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  box-shadow: inset 0 0 0 1px var(--fg-3);
+}
+.cv-node-dot.is-on {
+  background: var(--fg);
+  box-shadow: none;
+}
+.cv-node.is-off {
+  color: var(--fg-3);
+}
+.cv-node.is-off .cv-node-l {
+  color: var(--fg-3);
+}
+.cv-node-needs {
+  flex: none;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--needs);
+}
+.cv-chip-a {
+  display: inline-flex;
+  align-items: center;
+  height: 22px;
+  padding: 0 8px;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  color: var(--fg-2);
+  font-size: 12px;
+  cursor: grab;
+}
+.cv-chip-a:hover {
+  border-color: var(--line-2);
+  color: var(--fg);
+}
+.cv-node-custom {
+  border-style: dashed;
+  color: var(--fg);
+}
+.cv-node-edit {
+  min-width: 2ch;
+  outline: none;
+}
+.cv-node.is-editing {
+  cursor: text;
+  border-color: var(--fg-3);
+}
+.cv-node-h {
+  position: absolute;
+  right: -5px;
+  top: 50%;
+  width: 9px;
+  height: 9px;
+  margin-top: -5px;
+  border: 1px solid var(--fg-3);
+  border-radius: 50%;
+  background: var(--bg-2);
+  cursor: crosshair;
+  opacity: 0;
+}
+.cv-node:hover .cv-node-h,
+.cv-node:focus-within .cv-node-h,
+.spcv.is-linking .cv-node-h {
+  opacity: 1;
+}
+.cv-edge {
+  fill: none;
+  stroke: var(--fg-4);
+  stroke-width: 1;
+  vector-effect: non-scaling-stroke;
+}
+.cv-edge-device {
+  stroke-dasharray: 1 4;
+  stroke-linecap: round;
+}
+.cv-edge-session {
+  stroke: var(--line-2);
+  opacity: 0.6;
+}
+.cv-lane-l:empty {
+  display: none;
+}
+.cv-edge-custom {
+  stroke: var(--fg-3);
+}
+.cv-edge-custom.is-selected {
+  stroke: var(--fg);
+  stroke-width: 1.5;
+}
+.cv-edge.is-temp {
+  stroke-dasharray: 3 3;
+}
+.cv-edge-hit {
+  stroke: transparent;
+  stroke-width: 12;
+  vector-effect: non-scaling-stroke;
+  pointer-events: stroke;
+  cursor: pointer;
+}
+.cv-tethers {
+  pointer-events: none;
+}
+.cv-tethers .cv-edge-hit {
+  pointer-events: stroke;
+}
+
+/* hover a node: its lines light up, the rest steps back */
+.spcv.is-focus .cv-edge:not(.is-lit) {
+  opacity: 0.2;
+}
+.spcv.is-focus .cv-edge.is-lit {
+  stroke: var(--fg);
+  opacity: 1;
+}
+.spcv.is-focus .cv-tether {
+  opacity: 0.35;
+}
+.spcv.is-focus .cv-node:not(.is-lit) {
+  opacity: 0.35;
+}
+.spcv.is-focus .cv-win:not(.is-lit):not(.is-sub) {
+  opacity: 0.45;
+}
+.spcv.is-focus .cv-win.is-lit {
+  border-color: var(--fg-3);
+}
+.spcv.is-focus .cv-win.is-lit.is-needs {
+  border-color: var(--needs);
+}
+
+/* an agent on its way to a machine */
+.cv-ghost {
+  position: absolute;
+  left: 0;
+  top: 0;
+  height: 24px;
+  padding: 0 10px;
+  display: inline-flex;
+  align-items: center;
+  border: 1px solid var(--fg-3);
+  border-radius: 4px;
+  background: var(--bg-2);
+  color: var(--fg);
+  font-size: 12px;
+  pointer-events: none;
+  z-index: 6;
+  white-space: nowrap;
+}
+.spcv.is-ghosting .cv-node-machine:not(.is-off) {
+  border-color: var(--fg-3);
+  border-style: dashed;
+}
+.spcv.is-ghosting .cv-node-machine:not(.is-off):hover {
+  border-color: var(--fg);
+  border-style: solid;
+}
+
+/* the start form under a machine */
+.cv-pop {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 280px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px;
+  background: var(--bg-2);
+  border: 1px solid var(--line-2);
+  border-radius: 6px;
+  z-index: 5;
+  font-size: 13px;
+}
+.cv-pop-t {
+  color: var(--fg);
+  font-weight: 500;
+}
+.cv-pop-s {
+  margin-top: -6px;
+  color: var(--fg-3);
+  font-size: 12px;
+}
+.cv-pop-folder,
+.cv-pop-text {
+  height: 26px;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  background: transparent;
+  color: var(--fg);
+  font: 12px / 1 var(--cv-font);
+  padding: 0 8px;
+  outline: none;
+  max-width: 100%;
+}
+.cv-pop-folder:focus,
+.cv-pop-text:focus {
+  border-color: var(--fg-3);
+}
+.cv-pop-row {
+  display: flex;
+  gap: 8px;
+}
+.cv-pop-start,
+.cv-pop-cancel {
+  height: 26px;
+  padding: 0 12px;
+  border: 1px solid var(--line-2);
+  border-radius: 4px;
+  background: transparent;
+  color: var(--fg);
+  font: 12px / 1 var(--cv-font);
+  cursor: pointer;
+}
+.cv-pop-start:disabled {
+  color: var(--fg-4);
+  border-color: var(--line);
+  cursor: default;
+}
+.cv-pop-cancel {
+  color: var(--fg-3);
+  border-color: transparent;
+}
+.cv-pop-reason {
+  color: var(--fg-3);
+  font-size: 12px;
+}
+.cv-pop-reason.is-err {
+  color: var(--err);
+}
+.cv-pop-reason[hidden] {
+  display: none;
+}
+
+/* phones: the stacked column keeps only the lines that explain something */
+.spcv.is-narrow .cv-edge-session {
+  display: none;
+}
+
+/* nit: no minimap under a finger */
+.spcv.is-touch-drag .cv-minimap {
+  opacity: 0;
+}
+
+/* ---------- light: white windows on a grey floor ---------- */
+
+.spcv[data-scheme="light"] {
+  --cv-floor: color-mix(in oklab, var(--bg) 96%, var(--fg));
+  --cv-dot: var(--line-2);
+  --cv-panel: var(--bg-2);
+  --cv-shadow: 0 1px 2px rgba(0, 0, 0, 0.06);
+  background-color: var(--cv-floor);
+  background-image: radial-gradient(circle, var(--cv-dot) 1px, transparent 1.5px);
+}
+.spcv[data-scheme="light"] .cv-win,
+.spcv[data-scheme="light"] .cv-node,
+.spcv[data-scheme="light"] .cv-tile,
+.spcv[data-scheme="light"] .cv-chip,
+.spcv[data-scheme="light"] .cv-pop,
+.spcv[data-scheme="light"] .cv-ghost,
+.spcv[data-scheme="light"] .cv-hud,
+.spcv[data-scheme="light"] .cv-minimap {
+  background: var(--bg-2);
+  border-color: var(--line-2);
+  box-shadow: var(--cv-shadow);
+}
+.spcv[data-scheme="light"] .cv-shelf {
+  background: var(--bg-2);
+  border-top-color: var(--line-2);
+}
+.spcv[data-scheme="light"] .cv-win.is-needs {
+  border-color: var(--needs);
+}
+.spcv[data-scheme="light"] .cv-win.is-hit,
+.spcv[data-scheme="light"] .cv-node.is-selected,
+.spcv[data-scheme="light"] .cv-win:focus-visible {
+  border-color: var(--fg);
+}
+.spcv[data-scheme="light"] .cv-lane {
+  background: color-mix(in oklab, var(--bg) 70%, transparent);
+  border-color: var(--line-2);
+}
+.spcv[data-scheme="light"] .cv-node-h {
+  background: var(--bg-2);
 }

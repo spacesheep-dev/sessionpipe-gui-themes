@@ -219,11 +219,30 @@ export interface Viewer {
 
 export interface SessionDetail {
   session: SessionSummary;
-  /** Ordered by seq. Paged: `after` is the last seq the client has. */
+  /** Ordered by seq. Paged forwards (`after` is the last seq the client has) or
+   *  backwards (`before` is the first seq it has; `tail=1` for the newest page). With
+   *  `slim=1` each event is the index's slim copy (`preview` set where data was cut). */
   events: StoredEvent[];
   total: number;
   /** Subagent sessions of this one. */
   children: SessionSummary[];
+  /** The seq of `events[0]`; absent when the page is empty. */
+  firstSeq?: number;
+  /** Whether the session has events before `firstSeq` (for an "older" affordance). */
+  hasOlder?: boolean;
+}
+
+/** Query of GET /api/ui/sessions/:harness/:id. */
+export interface DetailQuery {
+  after?: number;
+  before?: number;
+  /** The newest `limit` events. */
+  tail?: boolean;
+  limit?: number;
+  /** Slim events (big strings cut to a 2 KB preview) instead of the full lines from disk. */
+  slim?: boolean;
+  /** With `slim`: a shorter cut, 200–2048 chars, for list pages. */
+  preview?: number;
 }
 
 export interface FeedPage {
@@ -247,7 +266,9 @@ export interface Info {
   version: string;
   startedAt: string;
   port: number;
-  urls: { local: string; lan: string[] };
+  /** `local` and `lan` are plain http (sinks, the daemon, the trust page); `https` is
+   *  the one secure origin, present with TLS mode on (`Info.tls`). */
+  urls: { local: string; lan: string[]; https?: string };
   /** The `sessionpipe sink add …` line for another machine, with the LAN URL and the token. */
   sinkCommand: string;
   sinkToken: string;
@@ -261,6 +282,24 @@ export interface Info {
   storage: { dir: string; bytes: number };
   wellKnown: Record<string, unknown>;
   control: { enabled: boolean; rpId: string; machines: number };
+  /** TLS mode (`--tls`): the same port also answers https with a certificate from the
+   *  GUI's own local CA, so passkeys work from a phone. Absent on older servers. */
+  tls?: TlsInfo;
+}
+
+/** What a page needs to get a phone onto the https origin (ROUTES.trust explains the steps). */
+export interface TlsInfo {
+  on: boolean;
+  /** The mDNS name the certificate and the rp id are made for: `<machine>.local`. */
+  hostname: string;
+  /** `https://<hostname>:<port>`, the only origin passkeys work on when TLS is on. */
+  httpsUrl: string;
+  /** Plain-http `GET /ca.crt` on the first LAN address (the phone downloads the CA here). */
+  caUrl: string;
+  /** SHA-256 of the CA certificate, `AB:CD:…`, to compare on the phone before trusting. */
+  caFingerprint: string;
+  /** When the server certificate expires (ISO). */
+  expiresAt: string;
 }
 
 // ---------- control (phase 2; shapes fixed now so both sides can plan) ----------
@@ -296,11 +335,15 @@ export const ROUTES = {
   events: "/api/sessionpipe/v1/events",
   control: "/api/sessionpipe/v1/control",
   native: "/api/sessionpipe/v1/native",
+  /** GET, plain http, UI key: the steps that get a phone to trust the local CA (TLS mode). */
+  trust: "/trust",
+  /** GET, UI key: the CA certificate as a download (`application/x-x509-ca-cert`). */
+  caCert: "/ca.crt",
   ui: {
     info: "/api/ui/info",
     snapshot: "/api/ui/snapshot",
     stream: "/api/ui/stream",
-    /** GET /api/ui/sessions/:harness/:id?after=<seq>&limit=<n> → SessionDetail */
+    /** GET /api/ui/sessions/:harness/:id?after=|before=<seq>&tail=1&limit=<n>&slim=1 → SessionDetail */
     session: "/api/ui/sessions",
     /** GET /api/ui/events?<FeedQuery> → FeedPage */
     feed: "/api/ui/events",
@@ -315,6 +358,8 @@ export const ROUTES = {
     control: "/api/ui/control",
     /** GET → { viewers: Viewer[] } */
     viewers: "/api/ui/viewers",
+    /** GET → ColorThemesResponse: the JSON files under <stateDir>/color-themes. */
+    colorThemes: "/api/ui/color-themes",
   },
 } as const;
 

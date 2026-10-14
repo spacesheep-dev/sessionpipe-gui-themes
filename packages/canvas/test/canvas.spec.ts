@@ -111,7 +111,7 @@ test("double-click expands a window and streams its rows; again collapses", asyn
 
 test("search highlights matches and dims the rest; Escape clears", async ({ page }) => {
   await open(page);
-  await page.evaluate(() => window.__harness.world.start({ title: "Zebra crossing audit" }));
+  await page.evaluate(() => window.__harness.world.spawnSession({ title: "Zebra crossing audit" }));
   await page.keyboard.press("/");
   await expect(page.locator(".cv-search")).toBeFocused();
   await page.keyboard.type("zebra");
@@ -126,7 +126,7 @@ test("search highlights matches and dims the rest; Escape clears", async ({ page
 
 test("a new session lands in free space, overlapping nothing", async ({ page }) => {
   await open(page);
-  const key = await page.evaluate(() => window.__harness.world.start({ title: "Brand new" }));
+  const key = await page.evaluate(() => window.__harness.world.spawnSession({ title: "Brand new" }));
   const win = page.locator(`.cv-win[data-key="${key}"]`);
   await expect(win).toBeVisible();
   await page.waitForTimeout(300);

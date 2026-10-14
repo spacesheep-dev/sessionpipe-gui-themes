@@ -4,6 +4,8 @@
 // knobs the Playwright tests turn (raise, clear, end, start).
 import type {
   Attention,
+  ControlActivity,
+  MachineControl,
   MachineSummary,
   SessionDetail,
   SessionKey,
@@ -11,6 +13,7 @@ import type {
   SessionSummary,
   Stats,
   StoredEvent,
+  Viewer,
 } from "@sessionpipe-gui/theme-types/api";
 
 const MACHINES = ["misha-air", "studio"] as const;
@@ -74,6 +77,24 @@ const REPOS = [
   ["github.com/spacesheep-dev/spacesheep", "feat/sink-backoff"],
 ];
 const HARNESSES = ["claude-code", "codex", "gemini-cli", "cursor"];
+/** Accounts per harness; claude-code has two so the agents lane shows a group. */
+const ACCOUNTS: Record<string, { id: string; email: string }[]> = {
+  "claude-code": [
+    { id: "acct_7f3a9c", email: "misha@fictiontribe.com" },
+    { id: "acct_21bd04", email: "misha.petrov@gmail.com" },
+  ],
+  codex: [{ id: "org-9kq2", email: "misha@fictiontribe.com" }],
+  "gemini-cli": [{ id: "ge-114", email: "" }],
+  cursor: [{ id: "cu-02", email: "" }],
+};
+const FOLDERS: Record<string, string[]> = {
+  "misha-air": [
+    "/Users/misha/Desktop/Projects/sessionpipe",
+    "/Users/misha/Desktop/Projects/sessionpipe-gui",
+    "/Users/misha/Desktop/Projects/spacesheep",
+  ],
+  studio: ["/home/misha/work/spacesheep", "/home/misha/work/sessionpipe"],
+};
 const MODELS: Record<string, string> = {
   "claude-code": "claude-fable-5-1",
   codex: "gpt-5-codex",
@@ -105,19 +126,103 @@ interface Rec {
   proseAt: number;
 }
 
+export interface ControlCall {
+  kind: "send" | "answer" | "cancel" | "start";
+  args: unknown[];
+}
+
 export class World {
   private recs = new Map<SessionKey, Rec>();
   private eventListeners = new Set<(e: StoredEvent, s: SessionSummary) => void>();
   private n = 0;
   recent: StoredEvent[] = [];
+  /** Newest first, like the host's snapshot.control. */
+  control: ControlActivity[] = [];
+  /** Every control call the theme made, for the tests. */
+  calls: ControlCall[] = [];
+  /** Which machines' daemons answer right now. */
+  online: Record<string, boolean> = { "misha-air": true, studio: false };
+  viewers: Viewer[] = [
+    {
+      id: "v1",
+      ip: "this machine",
+      loopback: true,
+      device: "laptop",
+      label: "Mac · Chrome",
+      connectedAt: iso(Date.now() - 3600_000),
+      lastSeenAt: iso(Date.now()),
+      current: true,
+    },
+    {
+      id: "v2",
+      ip: "192.168.1.24",
+      loopback: false,
+      device: "phone",
+      label: "iPhone · Safari",
+      connectedAt: iso(Date.now() - 900_000),
+      lastSeenAt: iso(Date.now() - 20_000),
+    },
+    {
+      id: "v3",
+      ip: "192.168.1.31",
+      loopback: false,
+      device: "tablet",
+      label: "iPad · Safari",
+      connectedAt: iso(Date.now() - 300_000),
+      lastSeenAt: iso(Date.now() - 5_000),
+    },
+  ];
   onChange: () => void = () => {};
   startedAt = Date.now();
   private ticks = 0;
 
-  constructor(opts: { extra?: number; seed?: number } = {}) {
+  constructor(opts: { extra?: number; seed?: number; small?: boolean } = {}) {
     rnd = seeded(opts.seed ?? 7);
     const now = Date.now();
     const m = (i: number) => MACHINES[i % 2]!;
+    if (opts.small) {
+      // Two machines, three accounts, two repos: the map test's fixture.
+      const a = this.spawn({
+        harness: "claude-code",
+        machine: m(0),
+        title: TITLES[0],
+        state: "working",
+        at: now - 42 * 60_000,
+        repo: 0,
+        account: 0,
+      });
+      this.spawnSub(a, "Explore");
+      this.spawnSub(a, "Plan");
+      this.spawn({
+        harness: "claude-code",
+        machine: m(0),
+        title: TITLES[2],
+        state: "idle",
+        at: now - 70 * 60_000,
+        repo: 1,
+        account: 1,
+      });
+      this.spawn({
+        harness: "codex",
+        machine: m(0),
+        title: TITLES[1],
+        state: "needs_you",
+        at: now - 18 * 60_000,
+        repo: 1,
+        ask: 0,
+        account: 0,
+      });
+      this.spawn({
+        harness: "claude-code",
+        machine: m(1),
+        title: TITLES[8],
+        state: "working",
+        at: now - 9 * 60_000,
+        repo: 0,
+        account: 0,
+      });
+      return;
+    }
     const parent = this.spawn({
       harness: "claude-code",
       machine: m(0),
@@ -229,9 +334,201 @@ export class World {
         sessions: mine.length,
         working: mine.filter((r) => r.s.state === "working").length,
         needsYou: mine.filter((r) => r.s.state === "needs_you").length,
+        control: this.machineControl(name),
       });
     }
     return out;
+  }
+
+  private machineControl(name: string): MachineControl {
+    const seen = new Set<string>();
+    const accounts: { harness: string; id: string; email: string }[] = [];
+    for (const r of this.recs.values()) {
+      if (r.s.machine !== name || !r.s.accountId || seen.has(r.s.accountId)) continue;
+      seen.add(r.s.accountId);
+      const a = ACCOUNTS[r.s.harness]?.find((x) => x.id === r.s.accountId);
+      accounts.push({ harness: r.s.harness, id: r.s.accountId, email: a?.email ?? "" });
+    }
+    return {
+      machineId: `m_${name}`,
+      online: this.online[name] ?? false,
+      lastPollAt: iso(Date.now() - (this.online[name] ? 2000 : 3 * 3600_000)),
+      mode: "safe",
+      folders: FOLDERS[name] ?? [],
+      harnesses: ["claude-code", "codex"],
+      version: "0.7.2",
+      accounts,
+      keys:
+        name === "misha-air"
+          ? [
+              { id: "k1", alg: -7, name: "Misha's iPhone", addedAt: iso(Date.now() - 86_400_000) },
+              { id: "k2", alg: -7, name: "MacBook Touch ID", addedAt: iso(Date.now() - 86_400_000 * 3) },
+            ]
+          : [{ id: "k3", alg: -7, name: "Misha's iPhone", addedAt: iso(Date.now() - 86_400_000) }],
+      queued: this.control.filter((a) => a.machineId === `m_${name}` && !a.outcome).length,
+    };
+  }
+
+  // ---------- the fake control channel ----------
+
+  availability(target: { session?: SessionKey; machineId?: string }): { ok: boolean; reason?: string } {
+    let machine: string | undefined;
+    if (target.session) {
+      const r = this.recs.get(target.session);
+      if (!r) return { ok: false, reason: "the session is gone" };
+      if (r.s.state === "done") return { ok: false, reason: "the session has ended" };
+      machine = r.s.machine;
+    } else if (target.machineId) {
+      machine = MACHINES.find((n) => `m_${n}` === target.machineId);
+      if (!machine) return { ok: false, reason: "this machine is not paired here" };
+    }
+    if (!machine) return { ok: false, reason: "no machine" };
+    if (!this.online[machine]) return { ok: false, reason: `${machine}'s daemon is offline` };
+    return { ok: true };
+  }
+
+  private activity(
+    kind: ControlActivity["kind"],
+    machine: string,
+    session: SessionKey | undefined,
+    text?: string,
+  ): ControlActivity {
+    const now = Date.now();
+    const a: ControlActivity = {
+      id: `msg_${(++this.n).toString(36)}`,
+      machineId: `m_${machine}`,
+      kind,
+      session,
+      text,
+      at: iso(now),
+      expiresAt: iso(now + 15 * 60_000),
+      mode: "safe",
+    };
+    this.control = [a, ...this.control].slice(0, 200);
+    return a;
+  }
+
+  /** queued → taken → working (the reply growing) → delivered, over about three seconds. */
+  private carry(a: ControlActivity, reply: string | undefined, onDelivered?: () => void) {
+    const step = (patch: Partial<ControlActivity>, ms: number) =>
+      new Promise<void>((r) =>
+        setTimeout(() => {
+          Object.assign(a, patch);
+          this.control = [...this.control];
+          this.onChange();
+          r();
+        }, ms),
+      );
+    void (async () => {
+      await step({ outcome: "taken", takenAt: iso(Date.now()) }, 500);
+      if (reply) {
+        await step({ reply: reply.slice(0, Math.ceil(reply.length / 3)) }, 700);
+        await step({ reply: reply.slice(0, Math.ceil((reply.length * 2) / 3)) }, 700);
+      }
+      await step({ outcome: "delivered", ackedAt: iso(Date.now()), reply }, 700);
+      onDelivered?.();
+    })();
+  }
+
+  send(session: SessionKey, text: string): Promise<ControlActivity> {
+    this.calls.push({ kind: "send", args: [session, text] });
+    const av = this.availability({ session });
+    if (!av.ok) return Promise.reject(new Error(av.reason));
+    const r = this.recs.get(session)!;
+    const a = this.activity("prompt", r.s.machine!, session, text);
+    this.carry(a, undefined, () => {
+      // The prompt lands: a new turn starts on the session.
+      if (r.s.state === "done") return;
+      r.turn++;
+      r.prose = pick(PROSE);
+      r.proseAt = 0;
+      r.s.currentTurn = { turnId: `t_${r.turn}`, since: iso(Date.now()), promptChars: text.length };
+      r.s.counts.turns++;
+      r.s.progress = { turn: r.turn, user: text, assistant: "", at: iso(Date.now()) };
+      r.s.openAttentions = [];
+      this.setState(r, "working");
+      this.emit(r, "turn.started", { turn_id: `t_${r.turn}`, prompt_chars: text.length });
+      this.onChange();
+    });
+    this.onChange();
+    return Promise.resolve(a);
+  }
+
+  answer(
+    session: SessionKey,
+    attentionId: string,
+    decision: "allow" | "deny",
+    note?: string,
+  ): Promise<ControlActivity> {
+    this.calls.push({ kind: "answer", args: [session, attentionId, decision, note] });
+    const av = this.availability({ session });
+    if (!av.ok) return Promise.reject(new Error(av.reason));
+    const r = this.recs.get(session)!;
+    if (!r.s.openAttentions.some((x) => x.attentionId === attentionId)) {
+      return Promise.reject(new Error("that permission is no longer open"));
+    }
+    const a = this.activity("permission.answer", r.s.machine!, session, decision);
+    this.carry(a, undefined, () => this.clear(session));
+    this.onChange();
+    return Promise.resolve(a);
+  }
+
+  cancel(session: SessionKey): Promise<ControlActivity> {
+    this.calls.push({ kind: "cancel", args: [session] });
+    const av = this.availability({ session });
+    if (!av.ok) return Promise.reject(new Error(av.reason));
+    const r = this.recs.get(session)!;
+    const a = this.activity("cancel", r.s.machine!, session);
+    this.carry(a, undefined, () => {
+      if (r.s.currentTool) this.endTool(r);
+      if (r.s.currentTurn) this.emit(r, "turn.ended", { reason: "cancel", ms: 1000 });
+      r.s.currentTurn = undefined;
+      r.s.progress = undefined;
+      this.setState(r, "idle");
+      this.onChange();
+    });
+    this.onChange();
+    return Promise.resolve(a);
+  }
+
+  start(
+    machineId: string,
+    opts: { harness: string; cwd: string; text: string },
+  ): Promise<ControlActivity & { session: SessionKey }> {
+    this.calls.push({ kind: "start", args: [machineId, opts] });
+    const av = this.availability({ machineId });
+    if (!av.ok) return Promise.reject(new Error(av.reason));
+    const machine = MACHINES.find((n) => `m_${n}` === machineId)!;
+    const id = `${opts.harness.slice(0, 2)}_start${(++this.n).toString(36)}`;
+    const session = `${opts.harness}:${id}`;
+    const a = this.activity("start", machine, session, opts.text) as ControlActivity & { session: SessionKey };
+    a.session = session;
+    this.carry(a, "Starting…", () => {
+      const key = this.spawnWithId(id, {
+        harness: opts.harness,
+        machine,
+        title: opts.text,
+        state: "working",
+        at: Date.now(),
+        repo: 0,
+        cwd: opts.cwd,
+        account: 0,
+      });
+      a.ackSession = key;
+      this.onChange();
+    });
+    this.onChange();
+    return Promise.resolve(a);
+  }
+
+  private forcedId: string | undefined;
+  private spawnWithId(id: string, o: Parameters<World["spawn"]>[0]): SessionKey {
+    this.forcedId = id;
+    try {
+      return this.spawn(o);
+    } finally {
+      this.forcedId = undefined;
+    }
   }
 
   stats(): Stats {
@@ -323,7 +620,7 @@ export class World {
     this.onChange();
   }
 
-  start(opts: { harness?: string; machine?: string; title?: string; state?: SessionState } = {}): SessionKey {
+  spawnSession(opts: { harness?: string; machine?: string; title?: string; state?: SessionState } = {}): SessionKey {
     const key = this.spawn({
       harness: opts.harness ?? pick(HARNESSES),
       machine: opts.machine ?? pick(MACHINES),
@@ -374,7 +671,7 @@ export class World {
     if (this.ticks % 23 === 11) {
       const w = this.keys("working").filter((k) => !this.recs.get(k)!.s.parentId);
       if (w.length > 2) this.end(pick(w));
-      this.start();
+      this.spawnSession();
     }
     if (this.ticks % 17 === 8) {
       const w = this.keys("working").filter((k) => !this.recs.get(k)!.s.parentId);
@@ -399,18 +696,25 @@ export class World {
     ask?: number;
     writing?: boolean;
     parent?: Rec;
+    account?: number;
+    cwd?: string;
   }): SessionKey {
-    const id = `${o.harness.slice(0, 2)}_${(++this.n).toString(36).padStart(4, "0")}${Math.floor(rnd() * 1e6).toString(36)}`;
+    const id =
+      this.forcedId ??
+      `${o.harness.slice(0, 2)}_${(++this.n).toString(36).padStart(4, "0")}${Math.floor(rnd() * 1e6).toString(36)}`;
     const key = `${o.harness}:${id}`;
     const [repo, branch] = REPOS[o.repo % REPOS.length] as [string, string];
     const sub = !!o.parent;
+    const accounts = ACCOUNTS[o.harness] ?? [];
+    const account = o.parent?.s.accountId ?? accounts[(o.account ?? this.n) % Math.max(1, accounts.length)]?.id;
     const s: SessionSummary = {
       key,
       harness: o.harness,
       harnessVersion: "2.1.290",
       id,
       machine: o.machine,
-      cwd: `/Users/misha/Desktop/Projects/${repo.split("/").pop()}`,
+      cwd: o.cwd ?? `/Users/misha/Desktop/Projects/${repo.split("/").pop()}`,
+      accountId: account,
       repo,
       branch,
       model: MODELS[o.harness],

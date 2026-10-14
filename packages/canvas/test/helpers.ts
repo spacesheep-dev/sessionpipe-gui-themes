@@ -6,8 +6,9 @@ export const HARNESS = "/harness.html?tick=0&scheme=dark";
 export async function open(page: Page, extra = "") {
   await page.goto(HARNESS + extra);
   await page.waitForSelector(".cv-win");
-  // The layout is placed and fitted after storage resolves; give the first frame a beat.
-  await page.waitForTimeout(250);
+  // The layout is placed and fitted after storage resolves; let the first Fit land.
+  await page.waitForTimeout(350);
+  await settle(page);
 }
 
 /** Two frames: whatever the canvas scheduled has been applied. */
@@ -43,3 +44,10 @@ export async function stored(page: Page) {
 }
 
 export const parentWindows = (page: Page) => page.locator(".cv-win:not(.is-sub)");
+
+/** Turn the map on and wait for the Fit that follows it to land. */
+export async function mapOn(page: Page) {
+  await page.click(".cv-btn:has-text('Map')");
+  await page.waitForTimeout(320);
+  await settle(page);
+}

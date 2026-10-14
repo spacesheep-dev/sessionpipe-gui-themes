@@ -4,14 +4,16 @@
 // Rendering is transforms only, applied in one requestAnimationFrame that runs only
 // when something changed.
 import type { Theme, ThemeApi, ThemeSnapshot } from "@sessionpipe-gui/theme-types";
-import type { SessionKey, SessionSummary } from "@sessionpipe-gui/theme-types/api";
+import type { ControlActivity, SessionKey, SessionSummary } from "@sessionpipe-gui/theme-types/api";
 import "./canvas.css";
 import { attachInput, type Hit, type InputHost } from "./input";
 import { bounds, findFree, overlaps, type Rect, tidy } from "./layout";
+import { type MapHost, MapLayer } from "./map";
 import {
   EXP_H,
   EXP_W,
   emptyLayout,
+  GRID,
   type Layout,
   MAX_H,
   MAX_W,
@@ -19,6 +21,8 @@ import {
   MIN_W,
   SUB_H,
   SUB_W,
+  TREE_GAP,
+  TREE_ROW,
   type Viewport,
   WIN_H,
   WIN_W,
@@ -31,6 +35,7 @@ import { clamp, debounce, el, isTouchLike, reducedMotion, setClass, setText, svg
 import { WinView } from "./window";
 
 const VIEWPORT_KEY = "viewport";
+const MAP_LOCAL_KEY = "map";
 const SHELF_MAX = 48;
 const Z_NEEDS = 100_000;
 
@@ -44,6 +49,11 @@ class Canvas implements InputHost {
   private zoomLabel: HTMLButtonElement;
   private conn: HTMLElement;
   private zonesBtn: HTMLButtonElement;
+  private mapBtn: HTMLButtonElement;
+  private treeG: SVGGElement;
+  private map: MapLayer;
+  /** Sessions a start named, waiting to appear by their machine's node. */
+  private pendingStart = new Map<SessionKey, string>();
   private tray: HTMLElement;
   private shelf: HTMLElement;
   private shelfBtn: HTMLButtonElement;
@@ -84,8 +94,11 @@ class Canvas implements InputHost {
     this.world = el("div", "cv-world");
     this.zonesEl = el("div", "cv-zones");
     this.tethers = svg("svg", { class: "cv-tethers", "aria-hidden": "true" });
+    this.treeG = svg("g", { class: "cv-tree" });
+    this.tethers.append(this.treeG);
     this.winsEl = el("div", "cv-wins");
-    this.world.append(this.zonesEl, this.tethers, this.winsEl);
+    this.map = new MapLayer(this.mapHost());
+    this.world.append(this.zonesEl, this.map.lanesEl, this.tethers, this.map.nodesEl, this.winsEl, this.map.customEl);
 
     // HUD: search, actions, zoom.
     const hud = el("div", "cv-hud");
@@ -108,6 +121,10 @@ class Canvas implements InputHost {
     btn("Tidy", "Arrange by state", () => this.tidy());
     btn("Fit", "Zoom to show everything (0)", () => this.fit());
     this.zonesBtn = btn("Zones", "Show machines as regions", () => this.toggleZones());
+    this.mapBtn = btn("Map", "Devices, agents, machines and repos around the sessions", () => this.toggleMap());
+    const add = btn("+", "Add a node of your own", () => this.addCustomNode());
+    add.classList.add("cv-btn-add");
+    add.setAttribute("aria-label", "Add a node");
     btn("Reset", "Forget the layout", () => this.reset());
     const right = el("div", "cv-hud-r");
     this.conn = el("span", "cv-conn");
@@ -177,6 +194,7 @@ class Canvas implements InputHost {
     const fresh = !stored || Object.keys(this.layout.windows).length === 0;
     this.sync(this.api.state.get(), true);
     if (fresh && this.narrow) this.tidy(false);
+    this.applyMapOn();
     if (!vp) this.fit(false);
     this.dirtyVp = true;
     this.request();
@@ -190,11 +208,13 @@ class Canvas implements InputHost {
     this.save.flush();
     this.saveVp.flush();
     for (const v of this.views.values()) v.destroy();
+    this.map.destroy();
     this.root.remove();
   }
 
   private measure() {
     this.size = { w: this.root.clientWidth, h: this.root.clientHeight };
+    setClass(this.root, "is-narrow", this.size.w < 600);
   }
 
   /** A phone: windows stack in one column and Fit fits the width. */
@@ -229,15 +249,32 @@ class Canvas implements InputHost {
     let placed = false;
     let zChanged = false;
     const live: SessionSummary[] = [];
+    // Finished subagents per parent session id, and this snapshot's messages per session.
+    const doneKids = new Map<string, number>();
+    for (const sess of s.sessions.values()) {
+      if (sess.parentId && sess.state === "done") doneKids.set(sess.parentId, (doneKids.get(sess.parentId) ?? 0) + 1);
+    }
+    const acts = new Map<SessionKey, ControlActivity[]>();
+    for (const a of s.control) {
+      if (!a.session) continue;
+      const list = acts.get(a.session) ?? [];
+      list.push(a);
+      acts.set(a.session, list);
+    }
+    const showing = (sess: SessionSummary) => {
+      if (!sess.parentId) return false;
+      const parent = s.sessions.get(`${sess.harness}:${sess.parentId}`);
+      return !!parent && !!this.layout.showDone?.[parent.key] && this.views.has(parent.key);
+    };
     for (const sess of s.sessions.values()) {
       const key = sess.key;
       const pos = this.layout.windows[key];
-      if (sess.state === "done") {
+      if (sess.state === "done" && !showing(sess)) {
         const v = this.views.get(key);
         if (v) this.leave(v);
         continue;
       }
-      live.push(sess);
+      if (sess.state !== "done") live.push(sess);
       if (pos?.hidden && pos.hidden !== sess.state) {
         delete pos.hidden;
         placed = true;
@@ -257,7 +294,7 @@ class Canvas implements InputHost {
         zChanged = true;
       } else {
         const before = view.session.state;
-        view.update(sess, now);
+        view.update(sess, now, acts.get(key) ?? [], doneKids.get(sess.id) ?? 0, !!this.layout.showDone?.[key]);
         if (before !== sess.state) zChanged = true;
       }
       const p = this.layout.windows[key];
@@ -284,17 +321,25 @@ class Canvas implements InputHost {
     this.renderShelf();
     this.renderZones();
     this.applySearch();
+    if (this.mapOn) this.map.build();
     this.dirtyAll = true;
     this.request();
   }
 
+  private toggleDone(parentKey: SessionKey) {
+    this.layout.showDone ??= {};
+    if (this.layout.showDone[parentKey]) delete this.layout.showDone[parentKey];
+    else this.layout.showDone[parentKey] = true;
+    this.save();
+    this.sync(this.snapshot, false);
+  }
+
   private addView(sess: SessionSummary, animate: boolean): WinView {
-    const v = new WinView(
-      this.api,
-      sess,
-      () => this.api.openSession(sess.key),
-      () => this.hide(sess.key),
-    );
+    const v = new WinView(this.api, sess, {
+      onOpen: () => this.api.openSession(sess.key),
+      onClose: () => this.hide(sess.key),
+      onToggleDone: () => this.toggleDone(sess.key),
+    });
     v.z = ++this.zTop;
     this.views.set(sess.key, v);
     if (animate) {
@@ -398,8 +443,12 @@ class Canvas implements InputHost {
     return { x: p.x, y: p.y, w, h };
   }
 
-  private toWorld(sx: number, sy: number) {
+  toWorld(sx: number, sy: number) {
     return { x: (sx - this.view.x) / this.view.k, y: (sy - this.view.y) / this.view.k };
+  }
+
+  private toScreen(wx: number, wy: number) {
+    return { x: wx * this.view.k + this.view.x, y: wy * this.view.k + this.view.y };
   }
 
   private visibleRects(): Rect[] {
@@ -421,7 +470,7 @@ class Canvas implements InputHost {
       const pk = `${sess.harness}:${sess.parentId}`;
       const parent = this.layout.windows[pk];
       if (parent) {
-        // The next free slot in rows under the parent, no wider than it.
+        // The next free row in the column beside the parent: the tree reads left to right.
         const siblings = [...this.snapshot.sessions.values()].filter(
           (s) =>
             s.parentId === sess.parentId &&
@@ -430,17 +479,26 @@ class Canvas implements InputHost {
             this.views.has(s.key),
         );
         const taken = siblings.map((s) => this.layout.windows[s.key]!);
-        for (let y = parent.h + 10; y < parent.h + 2000; y += h + 10) {
-          for (let x = 0; x + w <= Math.max(parent.w, w); x += w + 10) {
-            const r = { x, y, w, h };
-            if (!taken.some((t) => overlaps(r, t, 4))) return { ...r, rel: true };
-          }
+        const x = parent.w + TREE_GAP;
+        for (let y = 0; y < 4000; y += h + TREE_ROW) {
+          const r = { x, y, w, h };
+          if (!taken.some((t) => overlaps(r, t, 2))) return { ...r, rel: true };
         }
-        return { x: 0, y: parent.h + 10, w, h, rel: true };
+        return { x, y: 0, w, h, rel: true };
       }
     }
-    const centre = this.toWorld(this.size.w / 2, this.size.h / 2);
+    let centre = this.toWorld(this.size.w / 2, this.size.h / 2);
     const taken = this.visibleRects();
+    // A session the person started from the map appears just above its machine's node.
+    const nodeId = this.pendingStart.get(sess.key);
+    if (nodeId) {
+      this.pendingStart.delete(sess.key);
+      const nr = this.map.nodeRect(nodeId);
+      if (nr) {
+        centre = { x: nr.x + nr.w / 2, y: nr.y - 40 - h / 2 };
+        taken.push(...[...this.map.nodes.values()].map((n) => ({ x: n.x, y: n.y, w: n.w, h: n.h })));
+      }
+    }
     const r = findFree(centre, w, h, taken);
     return { x: r.x, y: r.y, w, h };
   }
@@ -487,6 +545,10 @@ class Canvas implements InputHost {
     this.dirtyAll = false;
     this.drawTethers();
     this.drawZones();
+    if (this.mapOn) {
+      this.map.layoutNodes();
+      this.map.draw();
+    }
     this.drawMinimap();
   }
 
@@ -512,8 +574,10 @@ class Canvas implements InputHost {
     for (const v of this.views.values()) this.dirtyWins.add(v.key);
   }
 
+  /** Parent → child as an orthogonal hairline: out of the parent's right edge, down a
+   *  trunk, into the child's left edge. */
   private drawTethers() {
-    const lines: string[] = [];
+    const paths: string[] = [];
     for (const v of this.views.values()) {
       const p = this.layout.windows[v.key];
       if (!p?.rel) continue;
@@ -522,17 +586,18 @@ class Canvas implements InputHost {
       const a = this.absRect(v.key);
       const b = this.absRect(pk);
       if (!a || !b) continue;
-      lines.push(`${a.x + a.w / 2},${a.y + a.h / 2},${b.x + b.w / 2},${b.y + b.h / 2}`);
+      const x1 = b.x + b.w;
+      const y1 = b.y + 14;
+      const x2 = a.x;
+      const y2 = a.y + 12;
+      const right = x2 >= x1;
+      const trunk = right ? x1 + Math.min(TREE_GAP / 2, (x2 - x1) / 2) : x1 + 8;
+      paths.push(right ? `M${x1},${y1} H${trunk} V${y2} H${x2}` : `M${x1},${y1} H${trunk} V${y2} H${x2}`);
     }
-    const sig = lines.join(";");
-    if (this.tethers.dataset.sig === sig) return;
-    this.tethers.dataset.sig = sig;
-    this.tethers.replaceChildren(
-      ...lines.map((l) => {
-        const [x1, y1, x2, y2] = l.split(",");
-        return svg("line", { x1: x1!, y1: y1!, x2: x2!, y2: y2!, class: "cv-tether" });
-      }),
-    );
+    const sig = paths.join(";");
+    if (this.treeG.dataset.sig === sig) return;
+    this.treeG.dataset.sig = sig;
+    this.treeG.replaceChildren(...paths.map((d) => svg("path", { d, class: "cv-tether" })));
   }
 
   // ---------- zones ----------
@@ -720,7 +785,12 @@ class Canvas implements InputHost {
       const needsYou = v.session.state === "needs_you";
       ctx.strokeStyle = needsYou ? needs : fg4;
       ctx.globalAlpha = needsYou || v.session.state === "working" ? 1 : 0.6;
-      ctx.strokeRect(px(ox + r.x * s), px(oy + r.y * s), Math.max(2, Math.round(r.w * s)), Math.max(2, Math.round(r.h * s)));
+      ctx.strokeRect(
+        px(ox + r.x * s),
+        px(oy + r.y * s),
+        Math.max(2, Math.round(r.w * s)),
+        Math.max(2, Math.round(r.h * s)),
+      );
     }
     ctx.globalAlpha = 1;
     ctx.strokeStyle = line;
@@ -761,6 +831,7 @@ class Canvas implements InputHost {
   fit(animate = true) {
     const rects = this.visibleRects();
     if (this.layout.zonesOn) rects.push(...Object.values(this.layout.zones));
+    if (this.mapOn) for (const n of this.map.nodes.values()) rects.push({ x: n.x, y: n.y, w: n.w, h: n.h });
     const b = bounds(rects);
     if (!b) {
       this.animateTo({ x: this.size.w / 2, y: this.size.h / 2, k: 1 });
@@ -811,6 +882,7 @@ class Canvas implements InputHost {
       for (const [name, z] of r.zones) this.layout.zones[name] = z;
       this.renderZones();
     }
+    if (this.mapOn) this.map.relayout();
     this.dirtyAll = true;
     this.request();
     this.fit(animate);
@@ -822,6 +894,8 @@ class Canvas implements InputHost {
     this.layout = emptyLayout();
     for (const v of [...this.views.values()]) this.dropView(v);
     setClass(this.zonesBtn, "is-on", false);
+    this.api.local.set(MAP_LOCAL_KEY, null);
+    this.applyMapOn();
     this.view = { x: this.size.w / 2, y: this.size.h / 2, k: 1 };
     this.sync(this.snapshot, true);
     this.fit();
@@ -962,6 +1036,19 @@ class Canvas implements InputHost {
       if (t.closest(".cv-win-bar")) return { kind: "win", key, part: "bar" };
       return { kind: "win", key, part: "body" };
     }
+    const node = t.closest(".cv-node") as HTMLElement | null;
+    if (node) {
+      const id = node.dataset.id!;
+      const custom = node.dataset.kind === "custom";
+      if (t.closest(".cv-node-h")) return { kind: "node", id, part: "handle", custom };
+      const chip = t.closest(".cv-chip-a") as HTMLElement | null;
+      if (chip) return { kind: "node", id, part: "chip", chip: chip.dataset.chip, custom };
+      if (t.closest(".cv-node-edit[contenteditable='true']")) return { kind: "node", id, part: "edit", custom };
+      return { kind: "node", id, part: "body", custom };
+    }
+    const link = t.closest("[data-link]") as (SVGElement & { dataset: DOMStringMap }) | null;
+    if (link?.dataset.link) return { kind: "link", id: link.dataset.link };
+    if (t.closest(".cv-pop, .cv-ghost")) return { kind: "ui" };
     const zone = t.closest(".cv-zone") as HTMLElement | null;
     if (zone) {
       const name = zone.dataset.zone!;
@@ -1079,6 +1166,148 @@ class Canvas implements InputHost {
     this.save();
     this.saveVp();
     this.save.flush();
+  }
+
+  // ---------- the map ----------
+
+  /** On phones the map is a per-device choice (off by default); elsewhere it is shared. */
+  private get mapOn(): boolean {
+    if (this.narrow) return this.api.local.get<boolean>(MAP_LOCAL_KEY) ?? false;
+    return !!this.layout.mapOn;
+  }
+
+  private toggleMap() {
+    if (this.narrow) this.api.local.set(MAP_LOCAL_KEY, !this.mapOn);
+    else {
+      this.layout.mapOn = !this.layout.mapOn;
+      this.save();
+    }
+    this.applyMapOn();
+    if (this.mapOn) this.fit();
+  }
+
+  private applyMapOn() {
+    const on = this.mapOn;
+    setClass(this.root, "has-map", on);
+    setClass(this.mapBtn, "is-on", on);
+    this.map.setOn(on);
+    if (on) {
+      this.map.build();
+      this.map.layoutNodes();
+    }
+    this.dirtyAll = true;
+    this.request();
+  }
+
+  private addCustomNode() {
+    if (!this.mapOn) this.toggleMap();
+    const c = this.toWorld(this.size.w / 2, this.size.h / 2 - 40);
+    this.map.addCustom(Math.round(c.x / GRID) * GRID, Math.round(c.y / GRID) * GRID);
+    this.save();
+    this.request();
+  }
+
+  private mapHost(): MapHost {
+    return {
+      api: this.api,
+      root: this.root,
+      world: this.world,
+      tethers: this.tethers,
+      layout: () => this.layout,
+      snapshot: () => this.snapshot,
+      liveWindows: () => {
+        const out: { session: SessionSummary; rect: Rect }[] = [];
+        for (const v of this.views.values()) {
+          if (v.session.parentId || v.session.state === "done" || this.leaving.has(v.key)) continue;
+          const rect = this.absRect(v.key);
+          if (rect) out.push({ session: v.session, rect });
+        }
+        return out;
+      },
+      toScreen: (wx, wy) => this.toScreen(wx, wy),
+      request: () => this.request(),
+      save: () => this.save(),
+      narrow: () => this.narrow,
+      taken: () => [
+        ...this.visibleRects(),
+        ...[...this.map.nodes.values()].map((n) => ({ x: n.x, y: n.y, w: n.w, h: n.h })),
+      ],
+      onStarted: (session, nodeId) => {
+        this.pendingStart.set(session, nodeId);
+        const machine = this.map.nodes.get(nodeId)?.label ?? "the machine";
+        this.say(`starting on ${machine}`);
+      },
+    };
+  }
+
+  hitAt(sx: number, sy: number): Hit {
+    const r = this.root.getBoundingClientRect();
+    const el = document.elementFromPoint(sx + r.left, sy + r.top);
+    return this.hit(el);
+  }
+
+  nodeRect(id: string) {
+    return this.map.nodeRect(id);
+  }
+
+  moveNode(id: string, x: number, y: number) {
+    this.map.moveNode(id, x, y);
+    this.request();
+  }
+
+  beginLink(id: string) {
+    this.map.beginLink(id);
+  }
+
+  moveLink(wx: number, wy: number) {
+    this.map.moveLink(wx, wy);
+  }
+
+  endLink(target: string | null) {
+    this.map.endLink(target);
+  }
+
+  beginGhost(chip: string, sx: number, sy: number) {
+    this.map.beginGhost(chip, sx, sy);
+  }
+
+  moveGhost(sx: number, sy: number) {
+    this.map.moveGhost(sx, sy);
+  }
+
+  endGhost(target: string | null) {
+    this.map.endGhost(target);
+  }
+
+  select(id: string | null) {
+    this.map.select(id);
+  }
+
+  deleteSelected() {
+    return this.map.deleteSelected();
+  }
+
+  busyTyping() {
+    return this.map.isEditing || this.map.hasPopover;
+  }
+
+  hover(id: string | null) {
+    if (!this.mapOn) return;
+    this.map.setFocus(id);
+  }
+
+  answerFocused(decision: "allow" | "deny") {
+    const key = this.focusedKey();
+    const v = key ? this.views.get(key) : undefined;
+    void v?.answer(decision);
+  }
+
+  /** Enter: the prompt line when the host can carry one, else expand. */
+  enterFocused() {
+    const key = this.focusedKey();
+    const v = key ? this.views.get(key) : undefined;
+    if (!v) return;
+    if (!v.focusPrompt()) this.toggleExpandKey(key!);
   }
 }
 

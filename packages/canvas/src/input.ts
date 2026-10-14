@@ -8,6 +8,8 @@ import { clamp } from "./util";
 export type Hit =
   | { kind: "win"; key: string; part: "body" | "resize" | "scroll" | "control" | "bar" }
   | { kind: "zone"; name: string; part: "label" | "resize" }
+  | { kind: "node"; id: string; part: "body" | "handle" | "chip" | "edit"; chip?: string; custom: boolean }
+  | { kind: "link"; id: string }
   | { kind: "ui" }
   | { kind: "canvas" };
 
@@ -34,6 +36,25 @@ export interface InputHost {
   clearSearch(): void;
   /** The gesture ended: persist. */
   commit(): void;
+
+  // The map: nodes, hand-drawn links, an agent dragged onto a machine.
+  toWorld(sx: number, sy: number): { x: number; y: number };
+  hitAt(sx: number, sy: number): Hit;
+  nodeRect(id: string): { x: number; y: number; w: number; h: number } | null;
+  moveNode(id: string, x: number, y: number): void;
+  beginLink(id: string): void;
+  moveLink(wx: number, wy: number): void;
+  endLink(target: string | null): void;
+  beginGhost(chip: string, sx: number, sy: number): void;
+  moveGhost(sx: number, sy: number): void;
+  endGhost(target: string | null): void;
+  select(id: string | null): void;
+  deleteSelected(): boolean;
+  /** Something with its own keyboard (a label being edited, the start form) is open. */
+  busyTyping(): boolean;
+  hover(id: string | null): void;
+  answerFocused(decision: "allow" | "deny"): void;
+  enterFocused(): void;
 }
 
 interface Pointer {
@@ -50,6 +71,9 @@ type Mode =
   | { kind: "resize"; key: string; sx: number; sy: number; ow: number; oh: number }
   | { kind: "zone"; name: string; sx: number; sy: number; ox: number; oy: number }
   | { kind: "zone-resize"; name: string; sx: number; sy: number; ow: number; oh: number }
+  | { kind: "node"; id: string; sx: number; sy: number; ox: number; oy: number; custom: boolean; moved: boolean }
+  | { kind: "link"; id: string }
+  | { kind: "ghost"; chip: string }
   | { kind: "pinch"; d0: number; k0: number; mx: number; my: number };
 
 const TAP_MS = 350;
@@ -96,9 +120,27 @@ export function attachInput(host: InputHost): () => void {
     }
     if (pointers.size > 1) return;
     const v = host.vp();
-    if (space || hit.kind === "canvas") {
+    if (hit.kind === "node" && hit.part === "edit") {
+      pointers.delete(e.pointerId);
+      return;
+    }
+    if (space || hit.kind === "canvas" || hit.kind === "link") {
+      if (hit.kind === "link") host.select(hit.id);
+      else host.select(null);
       mode = { kind: "pan", sx: p.x, sy: p.y, vx: v.x, vy: v.y };
       root.classList.add("is-panning");
+    } else if (hit.kind === "node") {
+      if (hit.part === "handle") {
+        mode = { kind: "link", id: hit.id };
+        host.beginLink(hit.id);
+      } else if (hit.part === "chip" && hit.chip) {
+        mode = { kind: "ghost", chip: hit.chip };
+        host.beginGhost(hit.chip, p.x, p.y);
+      } else {
+        const r = host.nodeRect(hit.id);
+        if (!r) return;
+        mode = { kind: "node", id: hit.id, sx: p.x, sy: p.y, ox: r.x, oy: r.y, custom: hit.custom, moved: false };
+      }
     } else if (hit.kind === "win") {
       host.focusWin(hit.key);
       const r = host.winRect(hit.key);
@@ -112,6 +154,7 @@ export function attachInput(host: InputHost): () => void {
       else mode = { kind: "zone", name: hit.name, sx: p.x, sy: p.y, ox: r.x, oy: r.y };
     }
     if (mode.kind !== "none" && e.pointerType === "mouse") e.preventDefault();
+    if (mode.kind !== "none" && e.pointerType === "touch") root.classList.add("is-touch-drag");
   };
 
   const onMove = (e: PointerEvent) => {
@@ -155,6 +198,25 @@ export function attachInput(host: InputHost): () => void {
       case "zone-resize":
         host.resizeZone(mode.name, mode.ow + (p.x - mode.sx) / k, mode.oh + (p.y - mode.sy) / k);
         break;
+      case "node": {
+        if (!mode.moved && Math.hypot(p.x - mode.sx, p.y - mode.sy) < DRAG_PX) return;
+        if (!mode.moved) {
+          mode.moved = true;
+          root.classList.add("is-dragging");
+        }
+        const nx = snap(mode.ox + (p.x - mode.sx) / k, e.shiftKey);
+        const ny = mode.custom ? snap(mode.oy + (p.y - mode.sy) / k, e.shiftKey) : mode.oy;
+        host.moveNode(mode.id, nx, ny);
+        break;
+      }
+      case "link": {
+        const w = host.toWorld(p.x, p.y);
+        host.moveLink(w.x, w.y);
+        break;
+      }
+      case "ghost":
+        host.moveGhost(p.x, p.y);
+        break;
       case "pinch": {
         const [a, b] = [...pointers.values()];
         if (!a || !b) return;
@@ -182,6 +244,16 @@ export function attachInput(host: InputHost): () => void {
       if (pointers.size === 0) end();
       return;
     }
+    const p = pt(e);
+    if (mode.kind === "link") {
+      const t = host.hitAt(p.x, p.y);
+      host.endLink(t.kind === "node" ? (t.chip ?? t.id) : t.kind === "win" ? `win:${t.key}` : null);
+    } else if (mode.kind === "ghost") {
+      const t = host.hitAt(p.x, p.y);
+      host.endGhost(t.kind === "node" ? t.id : null);
+    } else if (mode.kind === "node" && !mode.moved) {
+      host.select(mode.id);
+    }
     if (mode.kind === "drag" && !mode.moved) {
       // A click or tap on a window; two on the bar expand it. (The browser's dblclick is
       // no use here: pointer capture retargets it to the root.)
@@ -198,7 +270,7 @@ export function attachInput(host: InputHost): () => void {
   const end = () => {
     const was = mode.kind;
     mode = { kind: "none" };
-    root.classList.remove("is-panning", "is-dragging");
+    root.classList.remove("is-panning", "is-dragging", "is-touch-drag");
     if (was !== "none" && was !== "pan" && was !== "pinch") host.commit();
     else if (was === "pan" || was === "pinch") host.commit();
   };
@@ -252,8 +324,19 @@ export function attachInput(host: InputHost): () => void {
       return;
     }
     if (e.metaKey || e.ctrlKey || e.altKey) return;
+    if (host.busyTyping()) return;
     const step = e.shiftKey ? GRID * 4 : GRID;
     switch (e.key) {
+      case "Backspace":
+      case "Delete":
+        if (!host.deleteSelected()) return;
+        break;
+      case "a":
+        host.answerFocused("allow");
+        return;
+      case "d":
+        host.answerFocused("deny");
+        return;
       case " ":
         space = true;
         root.classList.add("is-space");
@@ -291,7 +374,7 @@ export function attachInput(host: InputHost): () => void {
         host.nudgeFocused(0, step);
         break;
       case "Enter":
-        host.expandFocused();
+        host.enterFocused();
         break;
       default:
         return;
@@ -313,6 +396,12 @@ export function attachInput(host: InputHost): () => void {
     space = false;
     root.classList.remove("is-space");
   };
+  const onOver = (e: PointerEvent) => {
+    if (mode.kind !== "none") return;
+    const hit = host.hit(e.target);
+    host.hover(hit.kind === "node" ? (hit.chip ?? hit.id) : hit.kind === "win" ? `win:${hit.key}` : null);
+  };
+  const onLeave = () => host.hover(null);
 
   root.addEventListener("pointerdown", onDown);
   root.addEventListener("pointermove", onMove);
@@ -322,6 +411,8 @@ export function attachInput(host: InputHost): () => void {
   document.addEventListener("keydown", onKey);
   document.addEventListener("keyup", onKeyUp);
   root.addEventListener("dblclick", onDbl);
+  root.addEventListener("pointerover", onOver);
+  root.addEventListener("pointerleave", onLeave);
   window.addEventListener("blur", onBlur);
   return () => {
     root.removeEventListener("pointerdown", onDown);
@@ -332,6 +423,8 @@ export function attachInput(host: InputHost): () => void {
     document.removeEventListener("keydown", onKey);
     document.removeEventListener("keyup", onKeyUp);
     root.removeEventListener("dblclick", onDbl);
+    root.removeEventListener("pointerover", onOver);
+    root.removeEventListener("pointerleave", onLeave);
     window.removeEventListener("blur", onBlur);
     if (wheelTimer) clearTimeout(wheelTimer);
   };

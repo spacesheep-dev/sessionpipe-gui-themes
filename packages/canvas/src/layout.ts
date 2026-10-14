@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Pure layout math: where a new window goes, tidy columns, bounds. World units throughout.
 import type { SessionState, SessionSummary } from "@sessionpipe-gui/theme-types/api";
-import { GAP, type WinPos, type Zone } from "./types";
+import { GAP, TREE_GAP, TREE_ROW, type WinPos, type Zone } from "./types";
 
 export interface Rect {
   x: number;
@@ -59,28 +59,27 @@ export function findFree(centre: { x: number; y: number }, w: number, h: number,
 
 const dist = (p: [number, number], x: number, y: number) => (p[0] - x) ** 2 + (p[1] - y) ** 2;
 
-/** Subagents hang under their parent in rows no wider than it; returns the rows' height. */
+/** Subagents stand in a column to the right of their parent (an agent tree read
+ *  left to right); returns how far below the parent's bottom the column reaches. */
 export function hangKids(
   kids: SessionSummary[],
   parent: WinPos,
   pos: (key: string) => WinPos,
   out: Map<string, { x: number; y: number }>,
 ): number {
-  let kx = 0;
-  let ky = parent.h + 10;
-  let rowH = 0;
+  let y = 0;
   for (const c of kids) {
     const cp = pos(c.key);
-    if (kx > 0 && kx + cp.w > parent.w) {
-      kx = 0;
-      ky += rowH + 10;
-      rowH = 0;
-    }
-    out.set(c.key, { x: kx, y: ky });
-    kx += cp.w + 10;
-    rowH = Math.max(rowH, cp.h);
+    out.set(c.key, { x: parent.w + TREE_GAP, y });
+    y += cp.h + TREE_ROW;
   }
-  return kids.length ? ky + rowH - parent.h : 0;
+  return Math.max(0, y - TREE_ROW - parent.h);
+}
+
+/** The width a parent takes with its children beside it. */
+export function treeWidth(kids: SessionSummary[], parent: WinPos, pos: (key: string) => WinPos): number {
+  if (!kids.length) return parent.w;
+  return parent.w + TREE_GAP + Math.max(...kids.map((c) => pos(c.key).w));
 }
 
 export const STATE_ORDER: SessionState[] = ["needs_you", "working", "stale", "idle"];
@@ -106,13 +105,12 @@ export function tidy(
     for (const s of order) {
       const p = pos(s.key);
       windows.set(s.key, { x: 0, y });
-      const kidH = hangKids(
-        children.filter((c) => c.parentId === s.id),
-        p,
-        pos,
-        windows,
-      );
-      y += p.h + kidH + GAP;
+      let ky = p.h + TREE_ROW;
+      for (const c of children.filter((c) => c.parentId === s.id)) {
+        windows.set(c.key, { x: 0, y: ky });
+        ky += pos(c.key).h + TREE_ROW;
+      }
+      y += Math.max(p.h, ky - TREE_ROW) + GAP;
     }
     return { windows, zones };
   }
@@ -149,14 +147,10 @@ export function tidy(
         }
         const p = pos(s.key);
         windows.set(s.key, { x, y });
-        const kidH = hangKids(
-          children.filter((c) => c.parentId === s.id),
-          p,
-          pos,
-          windows,
-        );
+        const kids = children.filter((c) => c.parentId === s.id);
+        const kidH = hangKids(kids, p, pos, windows);
         y += p.h + kidH + GAP;
-        colW = Math.max(colW, p.w);
+        colW = Math.max(colW, treeWidth(kids, p, pos));
         n++;
         maxY = Math.max(maxY, y);
       }
