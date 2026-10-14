@@ -56,14 +56,17 @@ const PAIRS = [
   ["--fg", "--bg", 7], ["--fg", "--bg-2", 7], ["--fg", "--bg-3", 7],
   ["--fg-2", "--bg", 7], ["--fg-2", "--bg-2", 7],
   ["--fg-3", "--bg", 5], ["--fg-3", "--bg-2", 5], ["--fg-3", "--bg-3", 4.5],
-  ["--fg-4", "--bg", 3],
+  ["--fg-4", "--bg", 3], ["--fg-4", "--bg-2", 3], ["--fg", "--bg-4", 7], ["--fg-2", "--bg-3", 4.5], ["--fg-3", "--bg-4", 3],
+  ["--needs-fg", "--bg-3", 4.5], ["--err", "--bg-2", 4.5], ["--err-soft", "--bg-2", 4.5],
   ["--needs-fg", "--bg", 4.5], ["--needs-fg", "--bg-2", 4.5], ["--fg", "--needs-bg", 7],
   ["--needs", "--bg", 3], ["--state-working", "--bg", 3], ["--state-stale", "--bg", 3],
   ["--ok", "--bg", 3], ["--err", "--bg", 4.5], ["--err-soft", "--bg", 4.5], ["--err", "--err-bg", 4.5],
   ["--focus", "--bg", 3], ["--focus", "--bg-2", 3], ["--mark-fg", "--mark", 4.5],
   ["--line-2", "--bg", 1.5], ["--state-working", "--state-working-bg", 3], ["--state-stale", "--state-stale-bg", 3],
 ];
-const NEUTRAL_MAX_CHROMA = 0.03;
+// Surfaces stay near-neutral (≤ 0.03) except in a "vivid" pair, which may carry real
+// chroma on its cards; the text tiers are then checked on those cards as well.
+const SURFACE_MAX_CHROMA = (id) => (/-vivid-/.test(id) ? 0.08 : 0.03);
 
 let failed = false;
 const files = readdirSync(pkg).filter((f) => f.endsWith(".json") && f !== "package.json").sort();
@@ -76,7 +79,8 @@ for (const f of files) {
   if (!quiet) console.log(`\n${f}  (${res.theme.name}, ${res.theme.scheme})  ${Object.keys(t).length}/${NAMES.length} tokens${missing.length ? `, missing ${missing.join(" ")}` : ""}`);
   for (const n of ["--bg", "--bg-2", "--bg-3", "--bg-4"]) {
     const c = oklch(t[n]);
-    if (c && c.C > NEUTRAL_MAX_CHROMA) { console.log(`  ${n} chroma ${c.C} > ${NEUTRAL_MAX_CHROMA}: surfaces must stay near-neutral`); failed = true; }
+    const cap = SURFACE_MAX_CHROMA(res.theme.id);
+    if (c && c.C > cap + 1e-9) { console.log(`  ${n} chroma ${c.C} > ${cap}: surfaces over this theme's cap`); failed = true; }
   }
   for (const [k, v] of Object.entries(t)) { const c = oklch(v); if (c?.clipped) console.log(`  note: ${k} ${v} is outside sRGB and will clip`); }
   for (const [fg, bg, floor] of PAIRS) {

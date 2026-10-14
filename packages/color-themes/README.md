@@ -1,12 +1,19 @@
-# Spacesheep color theme
+# Spacesheep color themes
 
-Two color themes for the [sessionpipe GUI](https://github.com/spacesheep-dev/sessionpipe-gui),
+Two pairs. **Spacesheep** (`spacesheep-dark`, `spacesheep-light`): two color themes for the [sessionpipe GUI](https://github.com/spacesheep-dev/sessionpipe-gui),
 one dark and one light, in the colours of [spacesheep](https://spacesheep.dev): the sheep's
 flame for *needs you*, its indigo for *working*, teal for *stale*, mint and coral for ok and
 error, the wool's yellow for a search mark, and a ground tinted toward the brand's violet.
 A lot of colour, in the places the GUI already reserves for colour; everything a person
 reads stays a near-neutral on a near-neutral, so an hour on the Board is no harder than on
 the default scheme.
+
+**Spacesheep Vivid** (`spacesheep-vivid-dark`, `spacesheep-vivid-light`) goes further: the
+surfaces themselves carry the brand (deep indigo cards on a violet-black page; soft lavender
+cards on warm cream), the hairlines are a saturated lavender, the muted text tiers are
+unmistakably violet, and `--mark` is a flame highlight. Lightness stays disciplined so the
+flame is still the loudest thing on a page, and every text tier clears its floor on the card
+it actually sits on (`--bg-2`, `--bg-3`), not only on the page.
 
 ![swatches](swatches.png)
 
@@ -23,7 +30,8 @@ quick settings (the gear on the rail or the tab bar) and pick **Spacesheep · da
 
 ## The palette
 
-Every value is `oklch(L C H)`. Surfaces keep chroma ≤ 0.03; text tiers clear 7:1 (`--fg`,
+Every value is `oklch(L C H)`. Surfaces keep chroma ≤ 0.03 (≤ 0.08 in the Vivid pair, where
+cards are meant to be coloured); text tiers clear 7:1 (`--fg`,
 `--fg-2`), 5:1 (`--fg-3`) and 3:1 (`--fg-4`) on `--bg`; `scripts/check.mjs` verifies all of
 it and the token names against `packages/shared-types/color-theme.ts`.
 
@@ -46,6 +54,21 @@ it and the token names against `packages/shared-types/color-theme.ts`.
 
 `--work*`, `--stale*`, `--idle*` and `--done*` follow the same hues (working = indigo,
 stale = teal, idle and done = the muted text tiers); `--shadow` stays `none`.
+
+### Vivid, where it differs
+
+| Role | Token | Vivid dark | Vivid light |
+| --- | --- | --- | --- |
+| Page | `--bg` | `0.15 0.05 290` violet-black | `0.97 0.022 85` warm cream |
+| Card | `--bg-2` | `0.22 0.07 288` deep indigo | `0.935 0.032 290` soft lavender |
+| Inset / hover | `--bg-3`, `--bg-4` | `0.27 0.075 288`, `0.33 0.08 288` | `0.90 0.05 290`, `0.86 0.07 290` |
+| Hairlines | `--line`, `--line-2` | `0.42 0.115 290`, `0.54 0.13 292` | `0.76 0.11 290`, `0.64 0.15 290` |
+| Text | `--fg` … `--fg-4` | `0.97 0.012 290` → `0.62 0.10 290` | `0.20 0.06 285` → `0.60 0.13 285` |
+| Needs you | `--needs`, `-fg`, `-bg` | `0.78 0.145 55`, `0.86 0.10 65`, `0.34 0.089 48` | `0.66 0.174 48`, `0.50 0.138 45`, `0.93 0.043 60` |
+| Working / focus | `--state-working` | `0.78 0.12 292` (focus `0.80 0.106 292`) | `0.53 0.22 278` |
+| Stale | `--state-stale` | `0.75 0.11 190` | `0.52 0.087 188` |
+| Ok / error | `--ok`, `--err` | `0.80 0.16 163`, `0.76 0.138 25` | `0.56 0.127 158`, `0.53 0.20 27` |
+| Mark (flame) | `--mark`, `--mark-fg` | `0.72 0.165 55`, `0.17 0.04 290` | `0.80 0.15 65`, `0.20 0.06 285` |
 
 ## Where the colour goes
 
