@@ -266,81 +266,77 @@ facts, same motion table, same reading-distance test; only the drawings change.
 
 ## 12. Style toggle
 
-`style: "figures" | "plan"`, persisted per device in `localStorage` under
-`sessionpipe-gui.office.style` (the `lib/theme.ts` pattern, `useSyncExternalStore`),
-default `figures` until the owner picks. A `Segmented` control beside the `?` button:
-`figures · plan`. Both styles consume the same `Posture`, `useSeating`, calm budget,
-cursor order, tooltip and keyboard; the toggle swaps only `Cell`, `Helper`, `EmptyDesk`
-and the room chrome. `Look` is ignored in plan.
+`style: "iso" | "figures"`, persisted per device in `api.local` under `style`, default
+`iso` until the owner picks. A `Segmented` control beside the `?` button: `iso · figures`.
+Both styles consume the same `Posture`, `useSeating`, calm budget, cursor order, tooltip
+and keyboard; the toggle swaps only the drawings and the room chrome. `Look` is ignored in
+iso.
 
-## 13. Plan view, a second style
+## 14. Iso, the default style
 
-A floor plan, the drawing an architect makes: nothing is foreshortened, so nothing can
-squash; the room is lines on paper, not a box. State is **position and one ring**.
+(§13, a floor plan, is withdrawn: on screen it was a wireframe, grey boxes and a dot.)
+
+A small isometric office, the kind a management sim draws at rest: classic 2:1
+projection, every object a two-tone solid with 1 px hairline edges, people one neutral
+tone, and nothing coloured but the amber under someone who needs you.
 
 ```
-┌────── window ────────────────────────────────────────────────── ◷ ┐
-│  ╭──────────╮ ╭──────────╮        ╭──────────╮ ╭──────────╮      │
-│  │ ▬▬   Cl  │ │ ▬▬   Cx  │        │ ▬▬   Cl  │ │ ▬▬   Ge  │  ○   │  ← desks, monitor line, monogram, round table
-│  ╰────▂─────╯ ╰────▂─────╯        ╰────▂─────╯ ╰────▂─────╯      │  ← mat at the bottom edge
-│     (●)            ●                   ◌             ●  z          │  ← working · needs_you (ring, beside) · gone · stale
-│    title          title               title         title         │
-│    repo @ br      repo @ br           repo @ br     repo @ br     │
-│                                                                 ⊙ │  ← plant
-└──╮ )─────────────────────────────────────────────────────────────┘  ← door with swing arc
-   4 home
+            ╱╲  back-right wall, door gap, "n home"
+          ╱    ╲
+   wall ╱  ▄▄    ╲          desk: a 2 × 1 box, monitor on the back edge, keyboard sliver,
+      ╱  ▐██▌o     ╲        monogram on the front face; the person in front, back to us
+    ╱   ▀▀▀▀ title   ╲
+    ╲  ▄▄     repo@br  ╲    rows run toward the front-left, 3 cells apart; columns 8 apart
+      ╲▐██▌o  title     ╱   (a 150 px nameplate per desk), so the plates form a staircase
+        ╲▀▀▀▀  repo@br ╱
+          ╲          ╱
+            ╲      ╱
+              ╲  ╱
 ```
 
-**Sizes at 1×** (cell 160 × 108; pods, aisles, rows, seating, nameplates as §1 / §4):
-- Desk: rounded rect 112 × 40, r 4, fill `--bg-4`, 1 px `--line-2`. Monitor line 28 × 2
-  at 4 px from the top edge, 10 px from the left: `--fg-4` off, `--work` lit, `--work-bg`
-  dim. Tool name 9 px mono `--fg-2` under a lit line. Monogram 9 px in the top-right
-  corner, harness hue. Mat 20 × 6 centred on the bottom edge, harness hue
-  (`oklch(0.7 0.06 h)`, dark `0.5`). Mug a 5 px circle at the right end, `--fg-4`.
-  Sheets 6 × 4 at the left end, `--fg-4`, 1–3.
-- Chair: 16 × 16 rounded r 6, 1 px `--fg-4` outline, no fill, centred under the desk.
-- Person: head 8 px circle `--fg-2` on a shoulder arc, a 16 × 8 ellipse clipped to its
-  lower half, `--fg-3`, the head overlapping its top by 3 px. One tone, no hair, no shirt.
-- Helper table: 20 px circle `--bg-4` + `--line-2`, in the 48 px to the right of the desk;
-  helper = 5 px head + 10 × 4 arc; a 10 × 2 laptop line on the table, lit when working.
-  Two seats (top and bottom of the table), then `+n` inside it.
-- Room: floor `--bg-2` on the page `--bg`, walls 1 px `--line-2`, no back-wall strip.
-  Window: a 4 px line in the top wall, 60 % wide, tinted by `hourBand` (§6). Door: 18 px
-  gap in the bottom wall at x = 16 with a quarter-arc swing line r 18, 1 px `--line-2`.
-  Clock: §6 glyph at 12 px inside the top-right corner. Plant: 10 px circle
-  `oklch(0.6 0.06 150)` inside the bottom-right corner. Tally outside the door.
+- **Grid** (`iso.ts`): a cell is a diamond 40 × 20 px at scale 1 (`K = 20`); world `(u, v, h)`
+  → screen `((u − v)·K, (u + v)·K/2 − h)`. Desk slots sit at `u = 1 + col·8`, `v = 1 + row·3`,
+  slot 0 at the back; columns fill by threes (`cols = min(3, ⌈n/3⌉)`), rows as needed.
+  The plate is `cols·8 × (rows·3 + 1.5)` cells: one cell of margin at the back, the
+  nameplates' footprint at the front, 6 px walls on the two back edges with a one-cell
+  door gap near the right corner; the tally stands outside it. On a phone every pair of
+  desks gets its own plate (one column, two rows), 320 px wide.
+- **Painter's order**: desks by `u + v`; within a desk: box, monogram, monitor, screen,
+  pool, chair seat, person, chair back, stander, helpers.
+- **Desk**: box 2 × 1 × 14, top `--o-top`, left face `--o-side`, right face `--o-side2`;
+  keyboard a 1-tone sliver on top; monogram 9 px `--fg-4` skewed onto the front face.
+  Monitor: a slab 1.4 cells wide, 12 tall, on the back edge, screen face toward the
+  chair: lit `--fg-2` with the tool in 9 px mono (`--bg`) while working, otherwise the
+  screen tone.
+- **Chair**: a 0.34-cell seat on a post with a low back, `--o-chair-top` / `--o-chair-side`.
+  **Person**: a 7 × 12 capsule `--fg-3` and a 7 px sphere `--fg-2`, 24 px from floor to
+  crown seated, 29 standing; one tone for everyone; a contact shadow under the chair.
+- **Postures** (the chair and the person move together, 300 ms `--ease-out`):
 
-**Positions** (`pull` = gap between the desk's bottom edge and the chair):
+  | state | drawing |
+  |---|---|
+  | `working` | seated, pulled to the desk (+2, −1 px), the screen lit with the tool; typing nudges the person 1 px at 2 Hz |
+  | `idle` | seated, pushed back half a cell (−10, +5 px), screen off |
+  | `stale` | pushed back, head tilted forward and down, the person at 60 %, a static `z` in `--fg-4` above |
+  | `needs_you` | standing beside the chair, one arm raised, under a **pool**: an ellipse of `--needs` at 25 % over the monitor, desk and floor; the bubble with the attention kind over the head |
+  | `gone` | empty chair pushed in (+6, −3 px), screen off, nameplate `--fg-4` |
+  | arriving / leaving | a standing figure walks from the door along the back wall and down the column, 700 ms, then the seated figure fades in; reverse on leaving |
 
-| state / phase | chair + person                                                   | monitor line | ring / bubble |
-|---------------|------------------------------------------------------------------|--------------|---------------|
-| `working`     | pull 0, head 2 px over the desk edge                              | lit + tool   | none |
-| `idle`        | pull 12, person in the chair                                      | off          | none |
-| `stale`       | pull 12, person `--fg-4`, a 9 px `z` `--fg-4` 4 px right of the head | off     | none; elapsed under the chair |
-| `needs_you`   | chair empty at pull 12; person **beside the desk**, 10 px into the right aisle at the desk's mid-height | dim | **2 px `--needs` ring** at r 7 around the head; bubble above (§3) |
-| `gone`        | chair outline only at pull 12, `--line-2`; nameplate `--fg-4`     | off          | none |
-| arriving / leaving | the same mark moving along the aisles (§1 path), no chair    | off          | none |
-
-**Colour discipline**: persons `--fg-2` (stale `--fg-4`), desks `--bg-4`, chairs `--fg-4`,
-harness hue only on the mat and monogram, `--work` only on a lit line, `--needs` only on
-the ring and bubble. Nothing else is coloured; `Look` is not drawn.
-
-**Motion** (adapted from §7; same calm budget and reduced-motion rules):
-- typing: the shoulder arc moves 1 px toward the desk, 2 frames, 2 Hz `steps(2)`, loops
-  while `Posture.typing`. The lit line does not blink; it is the only loop.
-- pull in / out 200 ms `--ease-out`; step beside / back 240 / 180 ms; ring 300 ms on,
-  600 ms off; bubble pop 160 ms; walk 900 ms linear along the aisles; chair-only 300 ms
-  `--ease-in` on gone; `z`, sheets, line changes instant. Reduced motion: no shrug, walks
-  become a 200 ms fade, pulls and steps instant.
-
-**Legend** (`?`): the five marks at 16 px with `STATE_HINT`, then the ring, bubble, mat,
-monogram, round table, door arc, window line, clock, plant: one line each.
-
-**Reading-distance test at 16 px**: desk 56 × 20, head 4 px, `--fg-2` on `--bg-2`, no
-colour, no text. Five head positions must each be namable by someone who has not seen the
-legend: touching the desk (working) · 6 px below it (idle) · 6 px below and fainter, with
-the `z` (stale) · beside the desk's right edge (needs_you) · absent, chair only (gone).
-Then add colour and confirm one ring is findable at 2 m across 18 desks.
-
-**Phone**: as §1, one pod per row, everything at 1×; the clock becomes text in the
-nameplate line; the door arc and plant stay.
+- **Helpers**: a round table (r 0.4, 10 tall) at the desk's left; a 0.6-scale person per
+  live subagent, two seats, then `+n` on the table; typing when working.
+- **Nameplate**: host text, 11 px `--fg-2`, 150 px wide, left-aligned 20 px right of the
+  desk's left corner, 38 px under its back corner; `repo @ branch` 10 px mono `--fg-4`
+  when the title fits one line; `gone` in `--fg-4`. The hit shape of a desk is a polygon
+  over the desk, its chair and the nameplate (`clip-path`), so neighbouring stairs do not
+  overlap; the focus ring is that polygon.
+- **Tones** (`office.css`): dark `--o-top: --bg-4`, `--o-side: --bg-3`, `--o-side2` a mix
+  toward `--bg-2`, chair `--fg-4` / `--line-2`; light swaps top and side (`--bg-3` / `--bg-4`)
+  so objects are darker than the floor, chair `--fg-4` / `--fg-3`, off screen `--line-2`.
+  The floor is `--bg-2` on a `--bg-3` slab edge; hairlines `--line-2`. No window, no
+  clock, no plant, no harness hue.
+- **Motion**: typing nudge, posture translate, 300 ms pool and stander entrance, the walk;
+  `prefers-reduced-motion` drops the walk (fade), the nudge and the transitions.
+- **Reading-distance test**: at 1× in greyscale, the five rows of the legend must be
+  namable without it: lit screen and pulled chair · standing with an arm up · pushed back ·
+  pushed back and faint with a `z` · an empty chair. Then add colour and confirm one pool
+  is findable at 2 m across 18 desks.

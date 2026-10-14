@@ -2,8 +2,8 @@
 // The legend behind `?`: the postures of the current style at reading size with
 // STATE_HINT, then the marks, one line each. The page must read without it.
 import type { SessionState } from "@sessionpipe-gui/theme-types/api";
-import type { CSSProperties } from "react";
 import { STATE_HINT, STATE_LABEL } from "./format";
+import { IsoDesk } from "./IsoCell";
 import type { Posture } from "./posture";
 import type { OfficeStyle } from "./style";
 import { Seated } from "./Worker";
@@ -11,14 +11,15 @@ import { Seated } from "./Worker";
 const LOOK = { shirt: 0, hair: 0, hairColour: 0, skin: 0, glasses: false };
 const POSTURES: SessionState[] = ["working", "needs_you", "idle", "stale"];
 
-const posture = (state: SessionState): Posture => ({
+const posture = (state: SessionState, gone = false): Posture => ({
   state,
   typing: false,
   screen: state === "working" ? "lit" : state === "needs_you" ? "dim" : "off",
+  tool: state === "working" ? "Edit" : undefined,
   errors: 0,
   helpers: [],
   hiddenHelpers: 0,
-  phase: "seated",
+  phase: gone ? "gone" : "seated",
   look: LOOK,
 });
 
@@ -41,55 +42,19 @@ function FigureMini({ state }: { state: SessionState | "gone" }) {
   );
 }
 
-/** The plan marks at 16 px: desk 56 × 20, head 4 px (half the cell's scale). */
-function PlanMini({ state }: { state: SessionState | "gone" }) {
-  const pulled = state === "working";
-  const chairY = pulled ? 44 : 56;
+/** The iso desk at 0.75×: the whole desk with its chair, 72 × 52. */
+function IsoMini({ state }: { state: SessionState | "gone" }) {
+  const p = posture(state === "gone" ? "idle" : state, state === "gone");
   return (
-    <svg
-      className={`legend-art legend-art--plan cell--${state}`}
-      viewBox="-16 2 144 76"
-      width="54"
-      height="29"
-      aria-hidden="true"
-    >
-      <use href="#pl-desk" />
-      <rect
-        className={`pl-line pl-line--${pulled ? "lit" : state === "needs_you" ? "dim" : "off"}`}
-        x="10"
-        y="8"
-        width="28"
-        height="2"
-      />
-      <use href="#pl-chair" x="48" y={chairY} className={state === "gone" ? "pl-chair--gone" : ""} />
-      {state !== "gone" && state !== "needs_you" && (
-        <g
-          className={state === "stale" ? "pl-sitter--stale" : ""}
-          transform={`translate(56 ${pulled ? 46 : chairY + 6})`}
-        >
-          <use href="#pl-arc" />
-          <use href="#pl-head" />
-          {state === "stale" && (
-            <text className="pl-z" x="8" y="2">
-              z
-            </text>
-          )}
-        </g>
-      )}
-      {state === "needs_you" && (
-        <g transform="translate(122 24)">
-          <circle className="pl-ring pl-ring--on" cx="0" cy="0" r="7" />
-          <use href="#pl-arc" />
-          <use href="#pl-head" />
-        </g>
-      )}
+    <svg className="legend-art legend-art--iso" viewBox="-44 -34 96 70" width="72" height="52" aria-hidden="true">
+      <IsoDesk p={p} glyph="Cl" />
     </svg>
   );
 }
 
 export function Legend({ open, onToggle, style }: { open: boolean; onToggle: () => void; style: OfficeStyle }) {
-  const plan = style === "plan";
-  const Mini = plan ? PlanMini : FigureMini;
+  const iso = style === "iso";
+  const Mini = iso ? IsoMini : FigureMini;
   return (
     <>
       <button
@@ -122,71 +87,34 @@ export function Legend({ open, onToggle, style }: { open: boolean; onToggle: () 
             <li>
               <Mini state="gone" />
               <span>
-                <b>gone home</b> the chair stays {plan ? "as an outline" : "pushed in"} for a while after a session
-                ends; the tally by the door counts the day.
+                <b>gone home</b> the chair stays pushed in for a while after a session ends; the tally by the door
+                counts the day.
               </span>
             </li>
-            {plan ? (
+            <li>
+              <span className="legend-bubble">permission</span>
+              <span>
+                <b>bubble</b> over someone standing: the kind of attention; the full message is in the tooltip.
+              </span>
+            </li>
+            {iso ? (
               <>
                 <li>
-                  <svg className="legend-art" viewBox="-9 -9 18 18" width="18" height="18" aria-hidden="true">
-                    <circle className="pl-ring pl-ring--on" cx="0" cy="0" r="7" />
-                    <use href="#pl-head" />
+                  <svg className="legend-art" viewBox="-16 -22 32 26" width="32" height="26" aria-hidden="true">
+                    <use href="#i-table" />
+                    <g transform="translate(-10 4) scale(0.6)">
+                      <use href="#i-torso" />
+                      <use href="#i-head" />
+                    </g>
                   </svg>
                   <span>
-                    <b>ring</b> amber only around someone who needs you; the bubble names what for.
+                    <b>round table</b> a subagent sits here, half size, left of its parent's desk; two seats, then +n.
                   </span>
                 </li>
                 <li>
-                  <span className="legend-bubble">permission</span>
+                  <span className="legend-mono">Cl</span>
                   <span>
-                    <b>bubble</b> the kind of attention; the full message is in the tooltip.
-                  </span>
-                </li>
-                <li>
-                  <svg className="legend-art" viewBox="44 40 24 8" width="24" height="8" aria-hidden="true">
-                    <rect
-                      className="pl-mat"
-                      x="46"
-                      y="41"
-                      width="20"
-                      height="6"
-                      rx="1"
-                      style={{ "--hue": 40 } as CSSProperties}
-                    />
-                  </svg>
-                  <span>
-                    <b>mat</b> the mat's hue and the corner monogram are the harness.
-                  </span>
-                </li>
-                <li>
-                  <svg className="legend-art" viewBox="-11 -11 22 22" width="22" height="22" aria-hidden="true">
-                    <use href="#pl-table" />
-                    <rect className="pl-lid pl-lid--lit" x="-5" y="-1" width="10" height="2" />
-                  </svg>
-                  <span>
-                    <b>round table</b> subagents sit here with a laptop line, lit while one works; two seats, then +n.
-                  </span>
-                </li>
-                <li>
-                  <svg className="legend-art" viewBox="0 0 18 18" width="18" height="18" aria-hidden="true">
-                    <path d="M18 18 A18 18 0 0 0 0 0" fill="none" stroke="var(--line-2)" strokeWidth="1" />
-                    <path d="M0 18 h18" stroke="var(--line-2)" strokeWidth="1" />
-                  </svg>
-                  <span>
-                    <b>door</b> front-left, with its swing; people walk in and out here.
-                  </span>
-                </li>
-                <li>
-                  <span className="legend-line" />
-                  <span>
-                    <b>window</b> the line in the back wall, tinted by your hour; the clock is your local time.
-                  </span>
-                </li>
-                <li>
-                  <span className="legend-plant" />
-                  <span>
-                    <b>plant</b> one per room, so the room reads as a room.
+                    <b>monogram</b> the harness, on the desk's front; the tool runs on a lit screen.
                   </span>
                 </li>
               </>
@@ -197,13 +125,7 @@ export function Legend({ open, onToggle, style }: { open: boolean; onToggle: () 
                     <use href="#o-lamp" />
                   </svg>
                   <span>
-                    <b>lamp</b> amber only while someone needs you; the bubble names what for.
-                  </span>
-                </li>
-                <li>
-                  <span className="legend-bubble">permission</span>
-                  <span>
-                    <b>bubble</b> the kind of attention; the full message is in the tooltip.
+                    <b>lamp</b> amber only while someone needs you.
                   </span>
                 </li>
                 <li>

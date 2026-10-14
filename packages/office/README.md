@@ -2,17 +2,20 @@
 
 **Office**, a theme for the [sessionpipe GUI](https://github.com/spacesheep-dev/sessionpipe-gui):
 every machine is a room, every live session a person at a desk, every live subagent a helper
-at a side table. Posture is the state (leaning in, standing with a hand up, leaning back with
-a mug, head down on the desk, an empty chair), amber marks who needs you, and nothing else is
-coloured. One room per machine, a tally by the door of who went home today, a window tinted by
-your hour, a clock, one plant. `DESIGN.md` is the whole design, including what it must never do.
+at a side table. Posture is the state (pulled to a lit screen, standing with a hand up, pushed
+back, pushed back and asleep, an empty chair), amber marks who needs you, and nothing else is
+coloured. One room per machine, a tally by the door of who went home today. `DESIGN.md` is the
+whole design, including what it must never do.
 
 Two drawing styles, switched with the control in the header and kept per device:
 
-- **plan** (the default): a floor plan. Desks as rounded rectangles with a monitor line, people
-  as a head on a shoulder arc, state as position plus one amber ring. Reads at any size.
+- **iso** (the default): a small isometric office. Two-tone desks with hairline edges, one
+  neutral tone for everyone, the running tool on the lit screen, the harness monogram on the
+  desk's front, a pool of amber light under whoever needs you. Rows step toward the front,
+  each desk with its nameplate on the floor.
 - **figures**: people seen from behind at desks, each with its own look fixed for the session's
-  life, a lit screen with the running tool, a lamp for *needs you*, a mug for *idle*.
+  life, a lit screen with the running tool, a lamp for *needs you*, a mug for *idle*, a window
+  tinted by your hour.
 
 Keyboard: `j` / `k` move through the desks, `Enter` opens the session, `?` shows the legend,
 `Esc` closes it (then goes back, as everywhere in the GUI). Hover or focus a desk for the

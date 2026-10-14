@@ -8,9 +8,10 @@ import type { SessionKey, SessionSummary } from "@sessionpipe-gui/theme-types/ap
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { NavLink, Segmented } from "./bits";
 import { useMediaQuery, useNow, usePageHidden, useSessionTree, useSnapshot } from "./hooks";
+import { IsoDefs } from "./IsoCell";
+import { MAX_COLS } from "./iso";
 import { useListNav } from "./keys";
 import { Legend } from "./Legend";
-import { PlanDefs } from "./PlanCell";
 import { OfficeDefs } from "./parts";
 import { derivePosture, hourBand, MAX_TYPING, type Phase, type Posture, reserveWalk, useSeating } from "./posture";
 import { Room, type RoomCell } from "./Room";
@@ -19,7 +20,7 @@ import { type OfficeStyle, useOfficeStyle } from "./style";
 const UNNAMED = "unnamed";
 const ARRIVE_MS = 1800;
 const LEAVE_MS = 1300;
-const MAX_ROWS = 3;
+const MAX_ROWS: Record<OfficeStyle, number> = { iso: 6, figures: 3 };
 const MAX_PODS = 3;
 const CHAIR_MS = 30 * 60_000;
 
@@ -131,8 +132,15 @@ export function Office({ api }: { api: ThemeApi }) {
     const since = midnight(now);
     const list = roomNames.map((name) => {
       const here = [...live, ...leaving.values()].filter((s) => roomOf(s) === name);
-      const pods = narrow ? 1 : Math.max(1, Math.min(MAX_PODS, Math.ceil(here.length / 2)));
-      const perRow = pods * 2;
+      // desks per row: iso fills columns of three (≤ MAX_COLS), figures two desks per pod
+      const perRow = narrow
+        ? style === "iso"
+          ? 1
+          : 2
+        : style === "iso"
+          ? Math.max(1, Math.min(MAX_COLS, Math.ceil(here.length / 3)))
+          : 2 * Math.max(1, Math.min(MAX_PODS, Math.ceil(here.length / 2)));
+      const maxRows = MAX_ROWS[style];
       const held = new Set(here.map((s) => slots.get(s.key) ?? 0));
       let maxSlot = here.reduce((m, s) => Math.max(m, slots.get(s.key) ?? 0), 0);
       const recent = all
@@ -151,13 +159,13 @@ export function Office({ api }: { api: ThemeApi }) {
       for (const s of recent) {
         const slot = lastSlot.current.get(s.key)!;
         const pod = Math.floor(slot / 2);
-        if (held.has(slot) || podsUsed.has(pod) || slot >= perRow * MAX_ROWS) continue;
+        if (held.has(slot) || podsUsed.has(pod) || slot >= perRow * maxRows) continue;
         held.add(slot);
         podsUsed.add(pod);
         chairs.push(s);
         maxSlot = Math.max(maxSlot, slot);
       }
-      const rows = Math.max(1, Math.min(MAX_ROWS, Math.ceil((maxSlot + 1) / perRow)));
+      const rows = Math.max(1, Math.min(maxRows, Math.ceil((maxSlot + 1) / perRow)));
       const cells: RoomCell[] = [
         ...here.map((s) => ({
           s,
@@ -184,10 +192,10 @@ export function Office({ api }: { api: ThemeApi }) {
       const gone = all.filter(
         (s) => s.state === "done" && !s.backfilled && !s.parentId && roomOf(s) === name && endedAt(s) >= since,
       ).length;
-      return { name, machine: machines.get(name), cells, pods, rows, gone };
+      return { name, machine: machines.get(name), cells, perRow, rows, gone };
     });
     return { list, keys };
-  }, [roomNames, live, leaving, slots, postures, narrow, machines, all, now]);
+  }, [roomNames, live, leaving, slots, postures, narrow, style, machines, all, now]);
 
   const open = useCallback((key: SessionKey) => api.openSession(key), [api]);
   const { cursor } = useListNav(rooms.keys, open);
@@ -243,7 +251,7 @@ export function Office({ api }: { api: ThemeApi }) {
     <div className={classes} data-scheme={scheme}>
       <div className="office">
         <OfficeDefs />
-        <PlanDefs />
+        <IsoDefs />
         <svg width="0" height="0" aria-hidden="true" style={{ position: "absolute" }}>
           <clipPath id="o-screen-clip">
             <rect x="36" y="15" width="24" height="16" />
@@ -257,8 +265,8 @@ export function Office({ api }: { api: ThemeApi }) {
             <Segmented<OfficeStyle>
               value={style}
               options={[
+                { value: "iso", label: "iso" },
                 { value: "figures", label: "figures" },
-                { value: "plan", label: "plan" },
               ]}
               onChange={setStyle}
               label="Drawing style"
@@ -277,7 +285,7 @@ export function Office({ api }: { api: ThemeApi }) {
                 name={r.name}
                 machine={r.machine}
                 cells={r.cells}
-                pods={r.pods}
+                perRow={r.perRow}
                 rows={r.rows}
                 gone={r.gone}
                 band={band}
@@ -310,7 +318,7 @@ function EmptyOffice({
       <Room
         name="no machines yet"
         cells={[]}
-        pods={1}
+        perRow={style === "iso" ? 1 : 2}
         rows={1}
         gone={0}
         band={band}

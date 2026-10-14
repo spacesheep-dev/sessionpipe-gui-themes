@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: Apache-2.0 */
-/* The office, in two styles (DESIGN.md §1–§13). Neutrals everywhere; amber only on a
-   needs_you lamp or ring and its bubble; a lit screen is the one other strong value. The
+/* The office, in two styles (DESIGN.md §1–§14). Neutrals everywhere; amber only on a
+   needs_you lamp or pool and its bubble; a lit screen is the one other strong value. The
    scene is laid out in logical px and scaled by --o-scale, which zooms the drawings but
    never the nameplate text. All motion lives in the no-preference block at the end.
 
@@ -199,8 +199,7 @@
   font-weight: 600;
   color: var(--fg);
 }
-.sp-office .room-pair,
-.sp-office .room-clock-text {
+.sp-office .room-pair {
   font-size: 11px;
   color: var(--fg-3);
 }
@@ -241,15 +240,12 @@
   --o-leaf: oklch(0.6 0.06 150);
   --look-hair: oklch(0.28 0.02 60);
   --look-trouser: var(--fg-3);
-  --pl-head: var(--fg-2);
-  --pl-arc: var(--fg-3);
-  --pl-chair: var(--fg-4);
 }
 .sp-office .room-floor {
   position: relative;
   height: calc(var(--floor-h) * var(--o-scale));
 }
-/* window: figures, a band across the back wall; plan, a line in the top wall */
+/* window: a band across the back wall, tinted by the hour */
 .sp-office .room-box--figures .room-window {
   position: absolute;
   left: 0;
@@ -259,35 +255,7 @@
   background: color-mix(in oklch, var(--bg-4) 80%, var(--o-window) 20%);
   transition: background-color 60s linear;
 }
-.sp-office .room-box--plan .room-window {
-  position: absolute;
-  left: 12px;
-  top: -1px;
-  width: 60%;
-  height: 4px;
-  background: color-mix(in oklch, var(--line-2) 55%, var(--o-window) 45%);
-  transition: background-color 60s linear;
-}
-.sp-office .room-clock {
-  position: absolute;
-  right: 6px;
-  top: 6px;
-}
-.sp-office .clock-hand {
-  stroke: var(--fg-2);
-  stroke-width: 1;
-  stroke-linecap: round;
-}
-.sp-office .room-plant {
-  position: absolute;
-  right: 6px;
-  bottom: 6px;
-  width: 10px;
-  height: 10px;
-  border-radius: 50%;
-  background: var(--o-leaf);
-}
-/* door: a break in the front wall, jambs 2 px; the plan adds the swing arc */
+/* door: a break in the front wall, jambs 2 px */
 .sp-office .room-door {
   position: absolute;
   left: 16px;
@@ -310,11 +278,6 @@
 }
 .sp-office .room-door::after {
   right: -2px;
-}
-.sp-office .room-door-arc {
-  position: absolute;
-  left: 16px;
-  bottom: 0;
 }
 .sp-office .room-home {
   position: absolute;
@@ -369,7 +332,7 @@
 .sp-office[data-scheme="dark"] .look-s2 {
   --look-shirt: oklch(0.65 0.06 220);
 }
-/* ---------- cell (both styles) ---------- */
+/* ---------- cell (figures) ---------- */
 
 .sp-office .cell {
   position: absolute;
@@ -381,10 +344,6 @@
 .sp-office .cell--figures {
   --ch: 120px;
   --plate-y: 74px;
-}
-.sp-office .cell--plan {
-  --ch: 108px;
-  --plate-y: 80px;
 }
 .sp-office .cell--arriving,
 .sp-office .cell--leaving {
@@ -493,7 +452,7 @@
   transform: rotate(45deg);
 }
 
-/* helpers: a link over the side table (figures) or a seat at the round table (plan) */
+/* helpers: a link over the side table */
 .sp-office .cell-helper {
   position: absolute;
   left: calc(var(--hx) * var(--o-scale));
@@ -501,11 +460,6 @@
   width: calc(48px * var(--o-scale));
   height: calc(56px * var(--o-scale));
   border-radius: 4px;
-}
-.sp-office .cell-helper--plan {
-  top: calc(var(--hy) * var(--o-scale));
-  width: calc(24px * var(--o-scale));
-  height: calc(20px * var(--o-scale));
 }
 .sp-office .helper-art {
   width: 100%;
@@ -519,10 +473,6 @@
 .sp-office .cell-helper + .cell-helper {
   pointer-events: none;
 }
-.sp-office .cell-helper--plan + .cell-helper--plan {
-  pointer-events: auto;
-}
-
 /* ---------- figures: facts on the desk ---------- */
 
 .sp-office .cell-screen {
@@ -565,76 +515,13 @@
   font-size: 8px;
   fill: var(--fg-3);
 }
-.sp-office .cell-z,
-.sp-office .pl-z {
+.sp-office .cell-z {
   font-family: var(--font-ui);
   font-size: 9px;
   fill: var(--fg-4);
 }
 .sp-office .helper-lamp {
   fill: var(--needs);
-}
-
-/* ---------- plan: marks ---------- */
-
-.sp-office .pl-line {
-  transition: fill 120ms linear;
-}
-.sp-office .pl-line--off {
-  fill: var(--fg-4);
-}
-.sp-office .pl-line--lit {
-  fill: var(--fg);
-}
-.sp-office .pl-line--dim {
-  fill: var(--line-2);
-}
-.sp-office .pl-tool {
-  font-family: var(--font-mono);
-  font-size: 9px;
-  fill: var(--fg-2);
-}
-.sp-office .pl-mono {
-  font-family: var(--font-display);
-  font-size: 9px;
-  font-weight: 600;
-  fill: oklch(0.55 0.1 var(--hue));
-}
-.sp-office .pl-mat {
-  fill: oklch(0.7 0.06 var(--hue));
-}
-.sp-office[data-scheme="dark"] .pl-mono {
-  fill: oklch(0.72 0.1 var(--hue));
-}
-.sp-office[data-scheme="dark"] .pl-mat {
-  fill: oklch(0.5 0.06 var(--hue));
-}
-.sp-office .pl-lid {
-  fill: var(--fg-4);
-  transition: fill 120ms linear;
-}
-.sp-office .pl-lid--lit {
-  fill: var(--fg);
-}
-.sp-office .pl-more {
-  font-family: var(--font-mono);
-  font-size: 8px;
-  fill: var(--fg-3);
-}
-.sp-office .pl-chair--gone {
-  --pl-chair: var(--line-2);
-}
-.sp-office .pl-sitter--stale {
-  --pl-head: var(--fg-4);
-  --pl-arc: var(--fg-4);
-}
-.sp-office .pl-seat {
-  transform: translateY(var(--pull, 0px));
-}
-.sp-office .pl-ring {
-  fill: none;
-  stroke: var(--needs);
-  stroke-width: 2;
 }
 
 /* the walk sprite is hidden unless a phase animation shows it */
@@ -645,11 +532,236 @@
   opacity: 0;
 }
 .sp-office .cell--leaving .seated,
-.sp-office .cell--leaving .pl-seat,
 .sp-office .cell--leaving .cell-plate,
 .sp-office .cell--leaving .cell-bubble,
 .sp-office .cell--leaving .cell-helper {
   opacity: 0;
+}
+
+/* ---------- iso: tones ---------- */
+
+/* Two greys per object, a light top and a darker side, plus the hairline; the chair and
+   the person are the mid and near tones of the text scale. Nothing else has a colour. */
+.sp-office {
+  --o-top: var(--bg-4);
+  --o-side: var(--bg-3);
+  --o-side2: color-mix(in oklch, var(--bg-3) 60%, var(--bg-2));
+  --o-key: var(--bg-3);
+  --o-screen: var(--bg-3);
+  --o-chair-top: var(--fg-4);
+  --o-chair-side: var(--line-2);
+  --o-body: var(--fg-3);
+  --o-head: var(--fg-2);
+  --o-shadow: color-mix(in oklch, var(--fg) 7%, transparent);
+}
+.sp-office[data-scheme="light"] {
+  --o-top: var(--bg-3);
+  --o-side: var(--bg-4);
+  --o-side2: color-mix(in oklch, var(--bg-4) 70%, var(--line-2));
+  --o-key: var(--line-2);
+  --o-screen: var(--line-2);
+  --o-chair-top: var(--fg-4);
+  --o-chair-side: var(--fg-3);
+  --o-shadow: color-mix(in oklch, var(--fg) 6%, transparent);
+}
+.sp-office .i-plate,
+.sp-office .i-plate-side,
+.sp-office .i-wall-top,
+.sp-office .i-wall-u,
+.sp-office .i-wall-v,
+.sp-office .i-screen {
+  stroke: var(--line-2);
+  stroke-width: 1;
+  stroke-linejoin: round;
+  vector-effect: non-scaling-stroke;
+}
+.sp-office .i-wall-top {
+  fill: var(--o-top);
+}
+.sp-office .i-wall-v {
+  fill: var(--o-side);
+}
+.sp-office .i-wall-u {
+  fill: var(--o-side2);
+}
+.sp-office .i-plate {
+  fill: var(--bg-2);
+}
+.sp-office .i-plate-side {
+  fill: var(--bg-3);
+}
+.sp-office .i-screen {
+  fill: var(--o-screen);
+  transition: fill 120ms linear;
+}
+.sp-office .i-screen--lit {
+  fill: var(--fg-2);
+}
+.sp-office .i-tool {
+  font-family: var(--font-mono);
+  font-size: 9px;
+  fill: var(--bg);
+}
+.sp-office .i-mono {
+  font-family: var(--font-ui);
+  font-size: 9px;
+  font-weight: 500;
+  fill: var(--fg-4);
+}
+.sp-office .i-pool {
+  fill: var(--needs);
+  opacity: 0.25;
+}
+.sp-office .i-z {
+  font-family: var(--font-ui);
+  font-size: 9px;
+  fill: var(--fg-4);
+}
+.sp-office .i-more {
+  font-family: var(--font-mono);
+  font-size: 8px;
+  fill: var(--fg-4);
+}
+.sp-office .i-desk--empty .i-screen,
+.sp-office .i-desk--gone .i-screen {
+  fill: var(--o-screen);
+}
+
+/* ---------- iso: postures (the chair and the person move together) ---------- */
+
+.sp-office .i-seat,
+.sp-office .i-headg {
+  transition: transform 300ms var(--ease-out);
+}
+.sp-office .i-seat--in {
+  transform: translate(2px, -1px);
+}
+.sp-office .i-seat--back {
+  transform: translate(-10px, 5px);
+}
+.sp-office .i-seat--gone {
+  transform: translate(6px, -3px);
+}
+.sp-office .i-seat--stale .i-person,
+.sp-office .i-helper--stale {
+  opacity: 0.6;
+}
+.sp-office .i-seat--stale .i-headg,
+.sp-office .i-helper--stale .i-headg {
+  transform: translate(1px, 2.5px);
+}
+.sp-office .i-walker {
+  opacity: 0;
+}
+.sp-office .i-desk--leaving .i-seat,
+.sp-office .icell.cell--leaving {
+  opacity: 0;
+}
+
+/* ---------- iso: the plate and the host text over it ---------- */
+
+.sp-office .room--iso {
+  gap: 2px;
+}
+.sp-office .iso-box {
+  position: relative;
+  width: calc(var(--room-w) * var(--o-scale));
+  height: calc(var(--room-h) * var(--o-scale));
+  max-width: 100%;
+}
+.sp-office .iso-box + .iso-box {
+  margin-top: 10px;
+}
+.sp-office .iso-art {
+  display: block;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+}
+.sp-office .icell {
+  position: absolute;
+  left: calc(var(--x) * var(--o-scale));
+  top: calc(var(--y) * var(--o-scale));
+  width: calc(160px * var(--o-scale));
+  height: calc(96px * var(--o-scale));
+  pointer-events: none;
+}
+.sp-office .icell-link {
+  position: absolute;
+  inset: 0;
+  pointer-events: auto;
+  clip-path: polygon(0 39.6%, 17.5% 0, 45% 25%, 45% 62.5%, 36.25% 75%, 100% 75%, 100% 100%, 6.25% 100%);
+  outline: none;
+}
+.sp-office .icell-ring {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+  pointer-events: none;
+  visibility: hidden;
+}
+.sp-office .icell-ring polygon {
+  fill: none;
+  stroke: var(--focus);
+  stroke-width: 2;
+  stroke-linejoin: round;
+  vector-effect: non-scaling-stroke;
+}
+.sp-office .icell:focus-within .icell-ring,
+.sp-office .icell[data-cursor] .icell-ring {
+  visibility: visible;
+}
+.sp-office .icell .cell-plate {
+  left: calc(10px * var(--o-scale));
+  top: calc(72px * var(--o-scale));
+  max-width: 150px;
+}
+.sp-office .icell .plate-row,
+.sp-office .icell .plate-repo {
+  max-width: 150px;
+}
+.sp-office .icell .plate-title {
+  color: var(--fg-2);
+}
+.sp-office .icell .plate-repo {
+  color: var(--fg-4);
+}
+.sp-office .icell.cell--gone .plate-title,
+.sp-office .icell.cell--gone .plate-repo {
+  color: var(--fg-4);
+}
+/* the bubble sits over the standing person's head */
+.sp-office .icell .cell-bubble {
+  left: calc(36px * var(--o-scale) - 9px);
+  top: calc(37px * var(--o-scale) - 20px);
+}
+.sp-office .icell-helper {
+  position: absolute;
+  left: calc(var(--x) * var(--o-scale));
+  top: calc(var(--y) * var(--o-scale));
+  width: calc(30px * var(--o-scale));
+  height: calc(36px * var(--o-scale));
+  border-radius: 4px;
+}
+.sp-office .icell-helper:focus-visible,
+.sp-office .icell-helper[data-cursor] {
+  outline: 2px solid var(--focus);
+  outline-offset: 0;
+}
+.sp-office .iso-home {
+  position: absolute;
+  left: calc(var(--door-x) * var(--o-scale));
+  top: calc(var(--door-y) * var(--o-scale));
+  transform: translate(-50%, -100%);
+  font-size: 11px;
+  line-height: 14px;
+  color: var(--fg-3);
+  white-space: nowrap;
+}
+.sp-office .legend-art--iso {
+  --o-scale: 1;
 }
 
 /* ---------- tooltip ---------- */
@@ -698,6 +810,24 @@
   visibility: visible;
   transition: visibility 0s 150ms;
 }
+/* iso: the tooltip hangs under the nameplate, outside the clipped link */
+.sp-office .icell .cell-tip {
+  top: calc(96px * var(--o-scale));
+  left: calc(10px * var(--o-scale));
+}
+.sp-office .icell:hover .cell-tip,
+.sp-office .icell:focus-within .cell-tip {
+  visibility: visible;
+  transition: visibility 0s 150ms;
+}
+.sp-office .icell-helper .cell-tip {
+  left: -40px;
+}
+.sp-office .icell-helper:hover .cell-tip,
+.sp-office .icell-helper:focus-visible .cell-tip {
+  visibility: visible;
+  transition: visibility 0s 150ms;
+}
 
 /* ---------- legend ---------- */
 
@@ -733,9 +863,6 @@
   --o-needs: var(--needs);
   --look-hair: oklch(0.28 0.02 60);
   --look-trouser: var(--fg-3);
-  --pl-head: var(--fg-2);
-  --pl-arc: var(--fg-3);
-  --pl-chair: var(--fg-4);
 }
 .sp-office .legend-head {
   display: flex;
@@ -800,18 +927,6 @@
   font-size: 9px;
   color: var(--fg-3);
 }
-.sp-office .legend-line {
-  width: 24px;
-  height: 4px;
-  background: color-mix(in oklch, var(--line-2) 55%, var(--o-window, var(--line-2)) 45%);
-}
-.sp-office .legend-plant {
-  width: 10px;
-  height: 10px;
-  border-radius: 50%;
-  background: oklch(0.6 0.06 150);
-}
-
 /* ---------- empty office ---------- */
 
 .sp-office .office-empty {
@@ -847,11 +962,10 @@
   }
 }
 
-/* ---------- motion (DESIGN.md §7, §13) ---------- */
+/* ---------- motion (DESIGN.md §7, §14) ---------- */
 
 @media (prefers-reduced-motion: no-preference) {
-  .sp-office .cell--typing .hands,
-  .sp-office .cell--typing .pl-arc {
+  .sp-office .cell--typing .hands {
     animation: o-type 500ms steps(2, jump-none) infinite;
     animation-delay: calc(var(--slot4, 0) * 125ms);
   }
@@ -864,14 +978,9 @@
     transform-origin: 5px -16px;
     animation: o-raise 240ms var(--ease-out);
   }
-  .sp-office .stander,
-  .sp-office .pl-beside {
+  .sp-office .stander {
     animation: o-step 240ms var(--ease-out);
   }
-  .sp-office .pl-seat {
-    transition: transform 200ms var(--ease-out);
-  }
-  .sp-office .pl-ring,
   .sp-office .cell-lamp {
     animation: o-fade 300ms linear;
   }
@@ -890,8 +999,7 @@
   .sp-office .head-down {
     animation: o-head-down 300ms var(--ease-in);
   }
-  .sp-office .cell-chair-in,
-  .sp-office .pl-chair--gone {
+  .sp-office .cell-chair-in {
     animation: o-chair-in 300ms var(--ease-in);
   }
   .sp-office .cell--arriving .walker {
@@ -899,8 +1007,7 @@
       o-walk-in 900ms linear both,
       o-vanish 1ms linear 900ms forwards;
   }
-  .sp-office .cell--arriving .seated,
-  .sp-office .cell--arriving .pl-seat {
+  .sp-office .cell--arriving .seated {
     animation: o-sit 200ms var(--ease-out) 900ms both;
   }
   .sp-office .cell--leaving .walker {
@@ -911,8 +1018,7 @@
   .sp-office .cell--arriving.cell--nowalk .walker {
     display: none;
   }
-  .sp-office .cell--arriving.cell--nowalk .seated,
-  .sp-office .cell--arriving.cell--nowalk .pl-seat {
+  .sp-office .cell--arriving.cell--nowalk .seated {
     animation: o-fade 200ms linear both;
   }
   .sp-office .cell--arriving .legs-a,
@@ -923,8 +1029,40 @@
   .sp-office .cell--leaving .legs-b {
     animation: o-legs-b 500ms steps(2, jump-none) infinite;
   }
+  /* iso */
+  .sp-office .i-person--typing {
+    animation: o-type 500ms steps(2, jump-none) infinite;
+    animation-delay: calc(var(--slot4, 0) * 125ms);
+  }
+  .sp-office .i-stander {
+    animation: o-iso-step 300ms var(--ease-out);
+  }
+  .sp-office .i-pool {
+    animation: o-pool 300ms linear;
+  }
+  .sp-office .i-desk--arriving .i-walker {
+    animation:
+      o-iso-in 700ms linear both,
+      o-vanish 1ms linear 700ms forwards;
+  }
+  .sp-office .i-desk--arriving .i-seat {
+    animation: o-fade 200ms linear 700ms both;
+  }
+  .sp-office .i-desk--leaving .i-walker {
+    animation:
+      o-iso-out 700ms linear both,
+      o-fadeout 150ms linear 550ms forwards;
+  }
+  .sp-office .i-desk--arriving.i-desk--nowalk .i-walker {
+    display: none;
+  }
+  .sp-office .i-desk--arriving.i-desk--nowalk .i-seat {
+    animation: o-fade 200ms linear both;
+  }
+  .sp-office .office--paused .i-person--typing {
+    animation-play-state: paused;
+  }
   .sp-office .office--paused .hands,
-  .sp-office .office--paused .pl-arc,
   .sp-office .office--paused .cell-lines,
   .sp-office .office--paused .legs-a,
   .sp-office .office--paused .legs-b {
@@ -933,11 +1071,19 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .sp-office .walker {
+  .sp-office .walker,
+  .sp-office .i-walker {
     display: none;
   }
-  .sp-office .cell--arriving .seated,
-  .sp-office .cell--arriving .pl-seat {
+  .sp-office .i-seat,
+  .sp-office .i-headg {
+    transition: none;
+  }
+  .sp-office .i-desk--leaving,
+  .sp-office .icell.cell--leaving {
+    opacity: 0;
+  }
+  .sp-office .cell--arriving .seated {
     animation: none;
   }
   .sp-office .cell--leaving {
@@ -1083,6 +1229,48 @@
     opacity: 0;
   }
   to {
+    opacity: 1;
+  }
+}
+@keyframes o-iso-step {
+  from {
+    transform: translate(-14px, 7px);
+    opacity: 0;
+  }
+}
+@keyframes o-pool {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 0.25;
+  }
+}
+@keyframes o-iso-in {
+  0% {
+    transform: translate(var(--wx), var(--wy));
+    opacity: 1;
+  }
+  45% {
+    transform: translate(var(--ax), var(--ay));
+    opacity: 1;
+  }
+  100% {
+    transform: translate(0, 0);
+    opacity: 1;
+  }
+}
+@keyframes o-iso-out {
+  0% {
+    transform: translate(0, 0);
+    opacity: 1;
+  }
+  55% {
+    transform: translate(var(--ax), var(--ay));
+    opacity: 1;
+  }
+  100% {
+    transform: translate(var(--wx), var(--wy));
     opacity: 1;
   }
 }
