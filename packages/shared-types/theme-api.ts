@@ -94,7 +94,10 @@ export interface ThemeApi {
 
   /** Host navigation. */
   navigate(path: string): void;
-  openSession(key: SessionKey): void;
+  /** Open a session: as the page (default), or `split` beside the current view in a
+   *  side panel the host slides in; `from` is the rectangle (viewport px) the panel
+   *  should animate out of, e.g. the card that was clicked. */
+  openSession(key: SessionKey, opts?: OpenSessionOptions): void;
 
   /** Design tokens as CSS custom property names the theme may use in its own CSS
    *  (e.g. "--bg", "--fg", "--fg-2", "--line", "--needs", "--err"); the host keeps them
@@ -148,6 +151,11 @@ export interface ThemeApi {
     /** "Cl" for claude-code, "Cx" for codex, … */
     monogram(harness: string): string;
   };
+}
+
+export interface OpenSessionOptions {
+  split?: boolean;
+  from?: { x: number; y: number; width: number; height: number };
 }
 
 /** The module's default export. `mount` returns the function that unmounts. */

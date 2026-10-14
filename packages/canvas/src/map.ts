@@ -9,7 +9,7 @@
 import type { ThemeApi, ThemeSnapshot } from "@sessionpipe-gui/theme-types";
 import type { SessionKey, SessionSummary } from "@sessionpipe-gui/theme-types/api";
 import { bounds, findFree, type Rect } from "./layout";
-import { type CustomNode, LANE_GAP, LANE_H, type Layout, type Link, NODE_GAP, NODE_H } from "./types";
+import { type CustomNode, LANE_GAP, type Layout, type Link, NODE_GAP, NODE_H } from "./types";
 import { el, oneLine, setClass, setText, svg } from "./util";
 
 export type NodeKind = "device" | "hub" | "agent" | "machine" | "repo" | "custom";
@@ -235,9 +235,19 @@ export class MapLayer {
       want.push({ id: `repo:${short}`, kind: "repo", lane: 4, label: short, sub: host });
     }
 
-    // Hand-drawn.
+    // Hand-drawn. A node left without a label (an edit the page never finished) goes.
     for (const c of Object.values(lay.custom ?? {})) {
+      if (!c.label?.trim() && c.id !== this.editing) {
+        delete lay.custom![c.id];
+        lay.links = (lay.links ?? []).filter((k) => k.from !== c.id && k.to !== c.id);
+        continue;
+      }
       want.push({ id: c.id, kind: "custom", lane: -1, label: c.label });
+    }
+    // Positions of nodes that are gone (a viewer that reconnected has a new id).
+    if (lay.nodes) {
+      const ids = new Set(want.map((n) => n.id));
+      for (const id of Object.keys(lay.nodes)) if (!ids.has(id)) delete lay.nodes[id];
     }
 
     const sig = want
@@ -335,102 +345,71 @@ export class MapLayer {
 
   // ---------- geometry ----------
 
-  /** Lane rows from the anchors; nodes get their stored x or the next free slot. */
+  /** Lanes are as wide as the sessions (at least MIN_LANE_W) and their nodes pack into
+   *  rows inside that width, so nothing can leave its lane: a node keeps the x it was
+   *  dragged to while it fits on its row, and wraps when it does not. Positions are
+   *  relative to the lane's left edge (`lanes.x`); a stored x outside the lane is dropped. */
   layoutNodes(): void {
     const lay = this.host.layout();
     const wins = this.host.liveWindows();
     const b = bounds(wins.map((w) => w.rect)) ?? { x: -300, y: -120, w: 600, h: 240 };
-    if (!lay.lanes) lay.lanes = this.defaultLanes(b);
-    const { top, bottom } = lay.lanes;
-    const agentsY = top - LANE_H;
-    const hubY = agentsY - LANE_GAP - HUB_H;
-    const devicesY = hubY - LANE_GAP - LANE_H;
-    this.rows = [
-      { y: devicesY, h: LANE_H },
-      { y: hubY, h: HUB_H },
-      { y: agentsY, h: LANE_H },
-      { y: bottom, h: LANE_H },
-      { y: bottom + LANE_H + LANE_GAP, h: LANE_H },
-    ];
+    if (!lay.lanes || lay.lanes.x === undefined) lay.lanes = this.defaultLanes(b);
     lay.nodes ??= {};
-    if (this.host.narrow()) {
-      this.wrapNodes(b, lay);
-      return;
-    }
-    const x0 = Math.min(b.x, ...Object.values(lay.nodes).map((n) => n.x));
-    // Stored x first; new nodes take the next slot in their lane, and remember it.
-    const nextX: number[] = this.rows.map(() => x0);
-    for (const n of this.nodes.values()) {
-      if (n.kind === "custom") continue;
-      const st = lay.nodes[n.id];
-      if (st) nextX[n.lane] = Math.max(nextX[n.lane]!, st.x + n.w + NODE_GAP);
-    }
-    for (const n of this.nodes.values()) {
-      if (n.kind === "custom") {
-        const c = lay.custom?.[n.id];
-        if (c) {
-          n.x = c.x;
-          n.y = c.y;
-        }
-        continue;
-      }
-      let st = lay.nodes[n.id];
-      if (!st) {
-        st = { x: nextX[n.lane]! };
-        lay.nodes[n.id] = st;
-        nextX[n.lane] = st.x + n.w + NODE_GAP;
-        this.host.save();
-      }
-      const row = this.rows[n.lane]!;
-      n.x = st.x;
-      n.y = row.y + (row.h - n.h) / 2;
-    }
-    // The bands span everything, with room on both sides.
-    let x1 = b.x + b.w;
-    let xMin = x0;
-    for (const n of this.nodes.values()) {
-      if (n.kind === "custom") continue;
-      xMin = Math.min(xMin, n.x);
-      x1 = Math.max(x1, n.x + n.w);
-    }
-    const w = Math.max(MIN_LANE_W, x1 - xMin + LANE_PAD * 2);
-    this.laneRect = { x: xMin - LANE_PAD, y: devicesY, w, h: this.rows[4]!.y + LANE_H - devicesY };
-  }
-
-  /** Phones: each lane is as wide as the column and its nodes wrap into rows, so the
-   *  lanes stack top → bottom and read at the column's zoom. Stored x is ignored. */
-  private wrapNodes(b: Rect, lay: Layout) {
-    const W = Math.max(b.w, 360);
+    const narrow = this.host.narrow();
+    const W = narrow ? Math.max(b.w, 360) : Math.max(MIN_LANE_W, b.w + LANE_PAD * 2);
     const PAD = 12;
     const ROW = NODE_H + 8;
-    const laneH = (lane: number) => {
-      let x = PAD;
-      let rows = 1;
-      for (const n of this.nodes.values()) {
-        if (n.lane !== lane) continue;
-        if (x > PAD && x + n.w > W - PAD) {
+    const laneX = lay.lanes.x;
+
+    // Pack each lane: stored positions first, in x order, each kept where it fits.
+    const placed = new Map<string, { x: number; row: number }>();
+    const rowsOf: number[] = [];
+    for (let lane = 0; lane < LANES.length; lane++) {
+      const members = [...this.nodes.values()].filter((n) => n.lane === lane);
+      const stored = (n: MapNode) => {
+        const st = lay.nodes?.[n.id];
+        if (!st || !Number.isFinite(st.x) || st.x < 0 || st.x + n.w > W - PAD) return undefined;
+        return st.x;
+      };
+      members.sort((p, q) => {
+        const a = stored(p);
+        const c = stored(q);
+        if (a === undefined && c === undefined) return 0;
+        if (a === undefined) return 1;
+        if (c === undefined) return -1;
+        return a - c;
+      });
+      let cursor = PAD;
+      let row = 0;
+      for (const n of members) {
+        const want = stored(n);
+        // Kept where it was dragged when that is further along the row and fits; else
+        // the next slot; a full row wraps and the node starts the next one.
+        let x = want !== undefined && want >= cursor && want + n.w <= W - PAD ? want : cursor;
+        if (x + n.w > W - PAD && cursor > PAD) {
+          row++;
+          cursor = PAD;
           x = PAD;
-          rows++;
         }
-        x += n.w + NODE_GAP;
+        placed.set(n.id, { x, row });
+        if (want === undefined || want !== x) lay.nodes[n.id] = { x };
+        cursor = x + n.w + NODE_GAP;
       }
-      return rows * ROW + 20;
-    };
-    const { top, bottom } = lay.lanes!;
-    const hA = laneH(2);
-    const hH = HUB_H + 12;
-    const hD = laneH(0);
-    const agentsY = top - hA;
-    const hubY = agentsY - LANE_GAP + 16 - hH;
-    const devicesY = hubY - LANE_GAP + 16 - hD;
+      rowsOf[lane] = row + 1;
+    }
+    const laneH = (lane: number) => (lane === 1 ? HUB_H + 12 : rowsOf[lane]! * ROW + 20);
+    const { top, bottom } = lay.lanes;
+    const gap = narrow ? LANE_GAP - 16 : LANE_GAP;
+    const agentsY = top - laneH(2);
+    const hubY = agentsY - gap - laneH(1);
+    const devicesY = hubY - gap - laneH(0);
     this.rows = [
-      { y: devicesY, h: hD },
-      { y: hubY, h: hH },
-      { y: agentsY, h: hA },
+      { y: devicesY, h: laneH(0) },
+      { y: hubY, h: laneH(1) },
+      { y: agentsY, h: laneH(2) },
       { y: bottom, h: laneH(3) },
-      { y: bottom + laneH(3) + LANE_GAP - 16, h: laneH(4) },
+      { y: bottom + laneH(3) + gap, h: laneH(4) },
     ];
-    const cursor = this.rows.map((r) => ({ x: PAD, y: r.y + 20 }));
     for (const n of this.nodes.values()) {
       if (n.kind === "custom") {
         const c = lay.custom?.[n.id];
@@ -440,21 +419,25 @@ export class MapLayer {
         }
         continue;
       }
-      const cur = cursor[n.lane]!;
-      if (cur.x > PAD && cur.x + n.w > W - PAD) {
-        cur.x = PAD;
-        cur.y += ROW;
-      }
-      n.x = b.x + cur.x;
-      n.y = cur.y;
-      cur.x += n.w + NODE_GAP;
+      const p = placed.get(n.id);
+      if (!p) continue;
+      const row = this.rows[n.lane]!;
+      n.x = laneX + p.x;
+      n.y = row.y + (n.lane === 1 ? (row.h - n.h) / 2 : 10 + p.row * ROW);
     }
     const last = this.rows[4]!;
-    this.laneRect = { x: b.x, y: this.rows[0]!.y, w: W, h: last.y + last.h - this.rows[0]!.y };
+    this.laneRect = { x: laneX, y: devicesY, w: W, h: last.y + last.h - devicesY };
   }
 
-  private defaultLanes(b: Rect): { top: number; bottom: number } {
-    return { top: b.y - LANE_GAP - 8, bottom: b.y + b.h + LANE_GAP + 8 };
+  /** Where the lanes are, for Fit. */
+  laneBounds(): Rect | null {
+    return this.lanesEl.hidden ? null : this.laneRect;
+  }
+
+  private defaultLanes(b: Rect): { x: number; top: number; bottom: number } {
+    const narrow = this.host.narrow();
+    const w = narrow ? Math.max(b.w, 360) : Math.max(MIN_LANE_W, b.w + LANE_PAD * 2);
+    return { x: b.x - (narrow ? 0 : (w - b.w) / 2), top: b.y - LANE_GAP - 8, bottom: b.y + b.h + LANE_GAP + 8 };
   }
 
   /** Tidy: lanes hug the windows again and the nodes pack from the left. */
@@ -503,8 +486,11 @@ export class MapLayer {
       n.y = y;
     } else {
       lay.nodes ??= {};
-      lay.nodes[id] = { x };
-      n.x = x;
+      const laneX = lay.lanes?.x ?? 0;
+      const W = this.laneRect.w;
+      const rel = Math.max(12, Math.min(W - 12 - n.w, x - laneX));
+      lay.nodes[id] = { x: rel };
+      n.x = laneX + rel;
     }
   }
 
@@ -655,6 +641,7 @@ export class MapLayer {
     const id = `c_${Date.now().toString(36)}${Math.floor(Math.random() * 1e4).toString(36)}`;
     const spot = findFree({ x, y }, 140, NODE_H, this.host.taken(), 24);
     lay.custom[id] = { id, label: "", x: spot.x, y: spot.y };
+    this.editing = id;
     this.build();
     this.layoutNodes();
     this.draw();

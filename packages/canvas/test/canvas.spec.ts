@@ -210,5 +210,22 @@ test("arrow keys nudge the focused window; the title arrow opens the session", a
   expect(after.x - before.x).toBe(8);
   expect(after.y - before.y).toBe(8);
   await win.locator(".cv-win-open").click();
-  await expect(page.locator("#log")).toHaveText(`openSession(${key})`);
+  await expect(page.locator("#log")).toHaveText(`openSession(${key} · split)`);
+  const opened = await page.evaluate(() => window.__harness.lastOpen());
+  const box = await win.boundingBox();
+  expect(opened?.key).toBe(key);
+  const opts = opened?.opts as { split: boolean; from: { x: number; y: number; width: number; height: number } };
+  expect(opts.split).toBe(true);
+  expect(opts.from.x).toBeCloseTo(box!.x, 0);
+  expect(opts.from.width).toBeCloseTo(box!.width, 0);
+});
+
+test("Enter on a focused window without a prompt line opens the session split", async ({ page }) => {
+  await open(page, "&control=0");
+  const win = parentWindows(page).first();
+  const key = (await win.getAttribute("data-key"))!;
+  await win.click({ position: { x: 100, y: 80 } });
+  await page.keyboard.press("Enter");
+  await expect(page.locator("#log")).toHaveText(`openSession(${key} · split)`);
+  await expect(win).not.toHaveClass(/is-expanded/);
 });

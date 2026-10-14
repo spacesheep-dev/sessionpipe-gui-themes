@@ -20,6 +20,7 @@ const world = new World({
   extra: Number(q.get("extra") ?? 0),
   seed: Number(q.get("seed") ?? 7),
   small: q.get("world") === "small",
+  repos: Number(q.get("repos") ?? 0),
 });
 const log = document.getElementById("log")!;
 const say = (s: string) => {
@@ -32,9 +33,15 @@ const say = (s: string) => {
 
 // Fake storage: in memory, with a per-call delay like a server round trip.
 let stored: unknown = null;
+// `?layout=` pre-seeds it (JSON), the way a layout saved by an earlier build would be there.
+try {
+  const seed = q.get("layout");
+  if (seed) stored = JSON.parse(seed);
+} catch {}
 const storageLog: unknown[] = [];
 const local = new Map<string, unknown>();
 
+let lastOpen: { key: string; opts?: unknown } | null = null;
 const listeners = new Set<(s: ThemeSnapshot) => void>();
 const snap = (): ThemeSnapshot => ({
   connection: "live",
@@ -87,7 +94,10 @@ const api: ThemeApi = {
           start: (m, o) => world.start(m, o),
         },
   navigate: (path) => say(`navigate(${path})`),
-  openSession: (key) => say(`openSession(${key})`),
+  openSession: (key, opts) => {
+    lastOpen = { key, opts };
+    say(`openSession(${key}${opts?.split ? " · split" : ""})`);
+  },
   tokens: [
     "--bg",
     "--bg-2",
@@ -164,6 +174,7 @@ declare global {
       storageLog: unknown[];
       local: Map<string, unknown>;
       sessions: () => SessionSummary[];
+      lastOpen: () => { key: string; opts?: unknown } | null;
     };
   }
 }
@@ -175,4 +186,5 @@ window.__harness = {
   storageLog,
   local,
   sessions: () => [...world.sessions().values()],
+  lastOpen: () => lastOpen,
 };

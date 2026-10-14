@@ -48,9 +48,10 @@ export interface Layout {
   shelfOpen: boolean;
   /** The infrastructure map around the sessions. */
   mapOn?: boolean;
-  /** Where the lanes sit: the bottom of the agents lane and the top of the machines lane. */
-  lanes?: { top: number; bottom: number };
-  /** Inferred map nodes the person moved, by node id: x within the lane (y for custom). */
+  /** Where the lanes sit: their left edge, the bottom of the agents lane, the top of the
+   *  machines lane. */
+  lanes?: { x: number; top: number; bottom: number };
+  /** Inferred map nodes the person moved, by node id: x from the lane's left edge. */
   nodes?: Record<string, { x: number }>;
   custom?: Record<string, CustomNode>;
   links?: Link[];

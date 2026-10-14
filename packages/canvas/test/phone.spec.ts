@@ -13,7 +13,7 @@ test("phone: windows stack in one column and a tap on the arrow opens the sessio
   const win = page.locator(".cv-win:not(.is-sub)").first();
   const key = (await win.getAttribute("data-key"))!;
   await win.locator(".cv-win-open").tap();
-  await expect(page.locator("#log")).toHaveText(`openSession(${key})`);
+  await expect(page.locator("#log")).toHaveText(`openSession(${key} · split)`);
 });
 
 test("phone: one finger drags a window; two taps on the title expand it", async ({ page }) => {

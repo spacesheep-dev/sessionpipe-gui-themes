@@ -272,3 +272,82 @@ for (const scheme of ["dark", "light"] as const) {
     expect(r.step).toBeGreaterThan(0);
   });
 }
+
+test("ten repos and a stale layout: every node inside its lane, lanes wrap, Fit shows them", async ({ page }) => {
+  // A layout saved by an earlier build: absolute node x's far to the right, viewer ids
+  // that no longer exist, an unlabelled custom node, lanes already anchored.
+  const stale = {
+    v: 1,
+    windows: {},
+    zones: {},
+    zonesOn: false,
+    shelfOpen: false,
+    mapOn: true,
+    lanes: { top: -48, bottom: 784 },
+    nodes: {
+      "dev:gone-1": { x: 1032 },
+      "dev:gone-2": { x: 1085 },
+      "repo:acme/service-01": { x: 2798 },
+      "repo:acme/service-02": { x: 2530 },
+      "machine:studio": { x: 4000 },
+    },
+    custom: { c_old: { id: "c_old", label: "", x: 768, y: 312 } },
+  };
+  await open(page, `${SMALL}&repos=10&layout=${encodeURIComponent(JSON.stringify(stale))}`);
+  await page.waitForTimeout(400);
+  await expect(page.locator('.cv-node[data-kind="repo"]')).toHaveCount(12);
+  await expect(page.locator(".cv-node-custom")).toHaveCount(0);
+  const r = await page.evaluate(() => {
+    const tf = (e: HTMLElement) => {
+      const m = /translate3d\(([-\d.]+)px, ([-\d.]+)px/.exec(e.style.transform)!;
+      return { x: Number(m[1]), y: Number(m[2]) };
+    };
+    const lanes = [...document.querySelectorAll<HTMLElement>(".cv-lane")].map((l) => ({
+      name: l.dataset.lane,
+      ...tf(l),
+      w: Number.parseFloat(l.style.width),
+      h: Number.parseFloat(l.style.height),
+    }));
+    const order = ["devices", "", "agents", "machines", "storage"];
+    const outside: string[] = [];
+    for (const n of document.querySelectorAll<HTMLElement>(".cv-node:not(.cv-node-custom)")) {
+      const kind = n.dataset.kind!;
+      const lane = lanes[{ device: 0, hub: 1, agent: 2, machine: 3, repo: 4 }[kind]!]!;
+      const p = tf(n);
+      const inside =
+        p.x >= lane.x &&
+        p.x + n.offsetWidth <= lane.x + lane.w &&
+        p.y >= lane.y &&
+        p.y + n.offsetHeight <= lane.y + lane.h;
+      if (!inside) outside.push(`${n.dataset.id} ${JSON.stringify(p)} vs ${JSON.stringify(lane)}`);
+    }
+    const storage = lanes[order.indexOf("storage")]!;
+    return { outside, storageRows: Math.round((storage.h - 20) / 44), laneW: storage.w, lanes };
+  });
+  expect(r.outside).toEqual([]);
+  expect(r.storageRows).toBeGreaterThanOrEqual(2);
+  expect(r.laneW).toBeLessThanOrEqual(1400);
+  // Fit brings the lanes on screen.
+  await page.keyboard.press("0");
+  await page.waitForTimeout(350);
+  const vis = await page.evaluate(() => {
+    const root = document.querySelector(".spcv")!.getBoundingClientRect();
+    return [...document.querySelectorAll(".cv-lane")].every((l) => {
+      const b = l.getBoundingClientRect();
+      return (
+        b.left >= root.left - 1 && b.right <= root.right + 1 && b.top >= root.top - 1 && b.bottom <= root.bottom + 1
+      );
+    });
+  });
+  expect(vis).toBe(true);
+  // The stale positions are gone from storage; the kept ones are lane-relative and small.
+  await expect
+    .poll(async () => {
+      const st = (await stored(page)) as unknown as { nodes?: Record<string, { x: number }> } | null;
+      const nodes = st?.nodes ?? {};
+      return Object.keys(nodes).some((k) => k.startsWith("dev:gone"))
+        ? "stale"
+        : Math.max(...Object.values(nodes).map((n) => n.x));
+    })
+    .toBeLessThan(1400);
+});

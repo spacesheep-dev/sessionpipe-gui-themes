@@ -176,7 +176,7 @@ export class World {
   startedAt = Date.now();
   private ticks = 0;
 
-  constructor(opts: { extra?: number; seed?: number; small?: boolean } = {}) {
+  constructor(opts: { extra?: number; seed?: number; small?: boolean; repos?: number } = {}) {
     rnd = seeded(opts.seed ?? 7);
     const now = Date.now();
     const m = (i: number) => MACHINES[i % 2]!;
@@ -221,6 +221,7 @@ export class World {
         repo: 0,
         account: 0,
       });
+      this.moreRepos(opts.repos ?? 0, now);
       return;
     }
     const parent = this.spawn({
@@ -312,6 +313,24 @@ export class World {
         at: now - Math.floor(rnd() * 120) * 60_000,
         repo: i % REPOS.length,
       });
+    }
+  }
+
+  /** N more idle sessions, each in a repo of its own: the storage lane gets crowded. */
+  private moreRepos(n: number, now: number) {
+    for (let i = 0; i < n; i++) {
+      const key = this.spawn({
+        harness: "claude-code",
+        machine: MACHINES[i % 2]!,
+        title: `Repo ${i + 1} chores`,
+        state: "idle",
+        at: now - (30 + i) * 60_000,
+        repo: 0,
+        account: 0,
+      });
+      const r = this.recs.get(key)!;
+      r.s.repo = `github.com/acme/service-${String(i + 1).padStart(2, "0")}`;
+      r.s.branch = "main";
     }
   }
 

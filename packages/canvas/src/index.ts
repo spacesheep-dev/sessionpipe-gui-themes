@@ -336,7 +336,7 @@ class Canvas implements InputHost {
 
   private addView(sess: SessionSummary, animate: boolean): WinView {
     const v = new WinView(this.api, sess, {
-      onOpen: () => this.api.openSession(sess.key),
+      onOpen: () => this.openSplit(sess.key),
       onClose: () => this.hide(sess.key),
       onToggleDone: () => this.toggleDone(sess.key),
     });
@@ -831,7 +831,11 @@ class Canvas implements InputHost {
   fit(animate = true) {
     const rects = this.visibleRects();
     if (this.layout.zonesOn) rects.push(...Object.values(this.layout.zones));
-    if (this.mapOn) for (const n of this.map.nodes.values()) rects.push({ x: n.x, y: n.y, w: n.w, h: n.h });
+    if (this.mapOn) {
+      const lanes = this.map.laneBounds();
+      if (lanes) rects.push(lanes);
+      for (const n of this.map.nodes.values()) rects.push({ x: n.x, y: n.y, w: n.w, h: n.h });
+    }
     const b = bounds(rects);
     if (!b) {
       this.animateTo({ x: this.size.w / 2, y: this.size.h / 2, k: 1 });
@@ -1302,12 +1306,22 @@ class Canvas implements InputHost {
     void v?.answer(decision);
   }
 
-  /** Enter: the prompt line when the host can carry one, else expand. */
+  /** Enter: the prompt line when the host can carry one, else the session beside the canvas. */
   enterFocused() {
     const key = this.focusedKey();
     const v = key ? this.views.get(key) : undefined;
     if (!v) return;
-    if (!v.focusPrompt()) this.toggleExpandKey(key!);
+    if (!v.focusPrompt()) this.openSplit(key!);
+  }
+
+  /** The session page in the host's split panel, morphing out of the window's rect. */
+  private openSplit(key: SessionKey) {
+    const v = this.views.get(key);
+    const r = v?.el.getBoundingClientRect();
+    this.api.openSession(
+      key,
+      r ? { split: true, from: { x: r.x, y: r.y, width: r.width, height: r.height } } : { split: true },
+    );
   }
 }
 

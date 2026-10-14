@@ -10,7 +10,8 @@ Experimental: it lives under the "experimental" divider in the GUI's navigation,
 ## What it shows
 
 **A window per session** — title bar (state dot, title, `machine · repo @ branch`, `→` opens
-the session page, `×` hides the window), a body with what is happening now (the running tool
+the session beside the canvas in the host's split panel, morphing out of the window, `×` hides
+the window), a body with what is happening now (the running tool
 and how long it has run, the text being written, or the last exchange), the open attention
 with **Allow / Deny** links (they go to the session page: control lives there), and a footer
 of counts (tools, errors, files, turns, subagents, harness, model). Resize from the corner.
@@ -41,7 +42,8 @@ the window gains a prompt line (Enter sends), Allow / Deny act in place, and a w
 session has Cancel; the message's lifecycle (queued → taken → working → delivered, with
 the reply) renders under the line the way the Session page shows it. When it cannot,
 the host's reason sits there instead, muted. Keys: `Enter` on a focused window opens its
-prompt line, `a` / `d` answer an open permission.
+prompt line (or, without one, the session split beside the canvas), `a` / `d` answer an open
+permission.
 
 **Map** — the Map toggle (persisted; off by default on phones) draws the infrastructure
 around the sessions in lanes, top to bottom: *devices* (browsers on this GUI, the
@@ -50,8 +52,9 @@ hub, *agents* (one group per harness with a chip per account, labelled by email 
 machine's control reported it), the session windows, *machines* (online / offline / not
 paired, an amber dot when a session there needs you) and *storage* (one node per repo).
 Lines: device → hub, account → the machines it runs on, live session → its machine and
-its repo. Hover a node to light its lines and step everything else back. Lane nodes drag
-along their lane and remember where they were. **Drag an account chip onto a machine** to
+its repo. Hover a node to light its lines and step everything else back. Lanes are as wide as the sessions (at least 960 px) and their nodes pack into rows inside
+that width, so nothing can leave its lane; a node dragged along its lane keeps its place
+while it fits, and positions of nodes that are gone (a browser that reconnected) are dropped. **Drag an account chip onto a machine** to
 start a session there: a small form takes the folder (from the machine's allowlist) and
 the first message, and the new window appears above the machine when it acks.
 
