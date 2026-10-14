@@ -183,6 +183,7 @@ export interface Snapshot {
   sessions: SessionSummary[];
   machines: MachineSummary[];
   stats: Stats;
+  viewers?: Viewer[];
 }
 
 /** What `GET /api/ui/stream` (SSE) sends. The `event:` field of each SSE frame is the
@@ -195,7 +196,26 @@ export type StreamMessage =
   | { kind: "forgotten"; key: SessionKey }
   | { kind: "machine"; machine: MachineSummary }
   | { kind: "stats"; stats: Stats }
-  | { kind: "control"; message: ControlActivity };
+  | { kind: "control"; message: ControlActivity }
+  | { kind: "viewers"; viewers: Viewer[] };
+
+/** A browser connected to this GUI's stream right now: a phone on the LAN, this
+ *  laptop's own tab. The receiver's reading of "devices", from the connection only;
+ *  nothing is installed on the device. */
+export interface Viewer {
+  /** Per connection; stable while the SSE stream stays open. */
+  id: string;
+  /** Remote address as seen by the server; "this machine" when loopback. */
+  ip: string;
+  loopback: boolean;
+  device: "phone" | "tablet" | "laptop" | "desktop" | "unknown";
+  /** Short human label from the user agent, e.g. "iPhone · Safari", "Mac · Chrome". */
+  label: string;
+  connectedAt: string;
+  lastSeenAt: string;
+  /** True in the copy sent to that very connection. */
+  current?: boolean;
+}
 
 export interface SessionDetail {
   session: SessionSummary;
@@ -293,6 +313,8 @@ export const ROUTES = {
     /** GET → image/svg+xml: the LAN URL with the UI key, for a phone camera. */
     qr: "/api/ui/qr.svg",
     control: "/api/ui/control",
+    /** GET → { viewers: Viewer[] } */
+    viewers: "/api/ui/viewers",
   },
 } as const;
 

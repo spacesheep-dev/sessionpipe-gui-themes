@@ -706,21 +706,24 @@ class Canvas implements InputHost {
     const s = Math.min((W - pad * 2) / Math.max(1, b.w), (H - pad * 2) / Math.max(1, b.h));
     const ox = (W - b.w * s) / 2 - b.x * s;
     const oy = (H - b.h * s) / 2 - b.y * s;
+    // Hairline outlines only: windows in muted grey, a needs-you window in amber, the
+    // viewport a shade darker. Nothing is filled.
     const css = getComputedStyle(this.root);
-    const fg3 = css.getPropertyValue("--fg-3").trim() || "#888";
+    const fg4 = css.getPropertyValue("--fg-4").trim() || "#888";
     const needs = css.getPropertyValue("--needs").trim() || "#d9a441";
-    const line = css.getPropertyValue("--fg-2").trim() || "#666";
+    const line = css.getPropertyValue("--fg-3").trim() || "#666";
+    ctx.lineWidth = 1;
+    const px = (v: number) => Math.round(v) + 0.5;
     for (const [key, v] of this.views) {
       const r = this.absRect(key);
       if (!r) continue;
       const needsYou = v.session.state === "needs_you";
-      ctx.fillStyle = needsYou ? needs : fg3;
-      ctx.globalAlpha = needsYou ? 1 : v.session.state === "working" ? 0.75 : 0.4;
-      ctx.fillRect(ox + r.x * s, oy + r.y * s, Math.max(2, r.w * s), Math.max(2, r.h * s));
+      ctx.strokeStyle = needsYou ? needs : fg4;
+      ctx.globalAlpha = needsYou || v.session.state === "working" ? 1 : 0.6;
+      ctx.strokeRect(px(ox + r.x * s), px(oy + r.y * s), Math.max(2, Math.round(r.w * s)), Math.max(2, Math.round(r.h * s)));
     }
     ctx.globalAlpha = 1;
     ctx.strokeStyle = line;
-    ctx.lineWidth = 1;
     ctx.strokeRect(
       Math.round(ox + vpw.x * s) + 0.5,
       Math.round(oy + vpw.y * s) + 0.5,

@@ -18,6 +18,7 @@ import type {
   SessionSummary,
   Stats,
   StoredEvent,
+  Viewer,
 } from "./api.js";
 
 export const THEME_API_VERSION = 1 as const;
@@ -57,6 +58,15 @@ export interface ThemeSnapshot {
   recent: readonly StoredEvent[];
   /** "dark" | "light", the resolved scheme the page renders in. */
   scheme: "dark" | "light";
+  /** Browsers connected to this GUI right now (phones, laptops); `current` marks this one. */
+  viewers: readonly Viewer[];
+}
+
+/** What a control call can do from this page. `ok: false` carries the reason the host
+ *  would show (not a secure context, machine not paired, daemon offline). */
+export interface ControlAvailability {
+  ok: boolean;
+  reason?: string;
 }
 
 export interface ThemeApi {
@@ -100,6 +110,29 @@ export interface ThemeApi {
   local: {
     get<T = unknown>(key: string): T | null;
     set(key: string, value: unknown): void;
+  };
+
+  /** The control channel, signed by the host with the person's passkey and day key
+   *  (CONTROL.md). Present when the host supports it; each call rejects with an Error
+   *  whose message is what the host would show. */
+  control?: {
+    /** Whether a command to this session's machine (or this machine id) can be signed and sent now. */
+    availability(target: { session?: SessionKey; machineId?: string }): ControlAvailability;
+    /** A prompt for the session's next turn. */
+    send(session: SessionKey, text: string): Promise<ControlActivity>;
+    /** Allow or deny an open permission attention. */
+    answer(
+      session: SessionKey,
+      attentionId: string,
+      decision: "allow" | "deny",
+      note?: string,
+    ): Promise<ControlActivity>;
+    cancel(session: SessionKey): Promise<ControlActivity>;
+    /** A new session on a paired machine; the returned activity names the session key the host chose. */
+    start(
+      machineId: string,
+      opts: { harness: string; cwd: string; text: string },
+    ): Promise<ControlActivity & { session: SessionKey }>;
   };
 
   /** The host's React and ReactDOM, for themes that want them without bundling their
