@@ -2,15 +2,28 @@
   "name": "@sessionpipe-gui/theme-office",
   "version": "0.1.0",
   "description": "Every machine a room, every live session a person at a desk. A sessionpipe GUI theme, drawn with the host's React.",
+  "keywords": [
+    "sessionpipe",
+    "sessionpipe-gui",
+    "sessionpipe-gui-view"
+  ],
   "license": "Apache-2.0",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/spacesheep-dev/sessionpipe-gui-themes.git",
     "directory": "packages/office"
   },
+  "homepage": "https://github.com/spacesheep-dev/sessionpipe-gui-themes/tree/main/packages/office#readme",
+  "bugs": {
+    "url": "https://github.com/spacesheep-dev/sessionpipe-gui-themes/issues"
+  },
   "type": "module",
+  "publishConfig": {
+    "access": "public"
+  },
   "files": [
     "dist",
+    "!dist/**/*.map",
     "theme.json",
     "README.md",
     "DESIGN.md"
@@ -18,7 +31,8 @@
   "scripts": {
     "build": "node scripts/build.mjs",
     "dev": "node scripts/build.mjs --watch",
-    "typecheck": "tsc -p tsconfig.json --noEmit"
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "prepublishOnly": "node scripts/build.mjs --minify"
   },
   "devDependencies": {
     "@sessionpipe-gui/theme-types": "0.1.0",

@@ -2,17 +2,36 @@
   "name": "@sessionpipe-gui/skin-paper-serif",
   "version": "0.1.0",
   "description": "A sessionpipe GUI skin: warm paper, a bundled serif for the interface text (Source Serif 4, OFL), square corners, one-pixel hairlines, roomier rows.",
+  "keywords": [
+    "sessionpipe",
+    "sessionpipe-gui",
+    "sessionpipe-gui-skin"
+  ],
   "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/spacesheep-dev/sessionpipe-gui-themes.git",
+    "directory": "packages/skin-paper-serif"
+  },
+  "homepage": "https://github.com/spacesheep-dev/sessionpipe-gui-themes/tree/main/packages/skin-paper-serif#readme",
+  "bugs": {
+    "url": "https://github.com/spacesheep-dev/sessionpipe-gui-themes/issues"
+  },
   "type": "module",
+  "publishConfig": {
+    "access": "public"
+  },
   "files": [
     "skin.json",
     "skin.css",
-    "fonts",
+    "fonts/*.woff2",
+    "fonts/LICENSE-SourceSerif4.md",
     "preview.png",
     "README.md"
   ],
   "scripts": {
     "test": "node ../color-themes/scripts/check.mjs --skin skin.json",
-    "preview": "node scripts/preview.mjs"
+    "preview": "node scripts/preview.mjs",
+    "prepublishOnly": "node ../../scripts/pack-check.mjs ."
   }
 }

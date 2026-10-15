@@ -765,6 +765,8 @@ export class World {
       maxTier: 3,
       backfilled: false,
       source: "demo",
+      flags: [],
+      turnStats: { count: 0 },
       counts: {
         events: 0,
         turns: 0,

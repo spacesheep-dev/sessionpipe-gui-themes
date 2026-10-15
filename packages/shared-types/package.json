@@ -2,22 +2,48 @@
   "name": "@sessionpipe-gui/theme-types",
   "version": "0.1.0",
   "description": "Type-only mirror of the sessionpipe GUI's extension contracts (shared/theme-api.ts, shared/plugin-api.ts, shared/api.ts).",
+  "keywords": [
+    "sessionpipe",
+    "sessionpipe-gui",
+    "sessionpipe-gui-types"
+  ],
   "license": "Apache-2.0",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/spacesheep-dev/sessionpipe-gui-themes.git",
     "directory": "packages/shared-types"
   },
+  "homepage": "https://github.com/spacesheep-dev/sessionpipe-gui-themes/tree/main/packages/shared-types#readme",
+  "bugs": {
+    "url": "https://github.com/spacesheep-dev/sessionpipe-gui-themes/issues"
+  },
   "type": "module",
+  "types": "./theme-api.ts",
   "exports": {
     ".": "./theme-api.ts",
     "./api": "./api.ts",
-    "./plugin-api": "./plugin-api.ts"
+    "./plugin-api": "./plugin-api.ts",
+    "./skin-api": "./skin-api.ts",
+    "./skins-builtin": "./skins-builtin.ts",
+    "./color-theme": "./color-theme.ts",
+    "./contrast": "./contrast.ts",
+    "./attachments": "./attachments.ts"
+  },
+  "publishConfig": {
+    "access": "public"
   },
   "files": [
     "theme-api.ts",
     "plugin-api.ts",
     "api.ts",
+    "skin-api.ts",
+    "skins-builtin.ts",
+    "color-theme.ts",
+    "contrast.ts",
+    "attachments.ts",
     "README.md"
-  ]
+  ],
+  "scripts": {
+    "prepublishOnly": "node ../../scripts/pack-check.mjs ."
+  }
 }

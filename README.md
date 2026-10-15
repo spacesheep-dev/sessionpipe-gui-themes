@@ -41,17 +41,26 @@ one command. Apache-2.0, like the GUI.
 
 ## Install
 
-On the machine that runs `sessionpipe-gui`. Canvas and Office are already there; the
-others take one line each (a folder, a `.tgz`/`.zip`, an npm package name or a git URL):
+On the machine that runs `sessionpipe-gui`. Canvas and Office are already in its package;
+the rest come from npm, one line each, or all at once with `sessionpipe-gui extras add all`
+(the Views page has the same list with buttons):
+
+| Package | npm | Install |
+|---|---|---|
+| Canvas | `@sessionpipe-gui/theme-canvas` | bundled with the GUI (`sessionpipe-gui view add @sessionpipe-gui/theme-canvas` on an older GUI) |
+| Office | `@sessionpipe-gui/theme-office` | bundled with the GUI |
+| Spacesheep | `@sessionpipe-gui/skin-spacesheep` | built in as the default skin (`sessionpipe-gui skin add @sessionpipe-gui/skin-spacesheep` on an older GUI) |
+| Spacesheep Vivid | `@sessionpipe-gui/skin-spacesheep-vivid` | `sessionpipe-gui skin add @sessionpipe-gui/skin-spacesheep-vivid` |
+| Paper Serif | `@sessionpipe-gui/skin-paper-serif` | `sessionpipe-gui skin add @sessionpipe-gui/skin-paper-serif` |
+| ping-a-human | `@sessionpipe-gui/plugin-ping-a-human` | `npx ping-a-human setup` once, then `sessionpipe-gui plugin add @sessionpipe-gui/plugin-ping-a-human` and *Reload plugins* on the Views page |
+| the types | `@sessionpipe-gui/theme-types` | `npm i -D @sessionpipe-gui/theme-types` in a package of your own |
+
+From a checkout of this repo, `add` takes the folder instead (a `.tgz`/`.zip` or a git URL
+work too), and a plain color theme is a file:
 
 ```sh
-sessionpipe-gui skin add ./packages/skin-spacesheep-vivid
 sessionpipe-gui skin add ./packages/skin-paper-serif
-
-# the plugin: run `npx ping-a-human setup` once, then Reload plugins on the GUI's Views page
 sessionpipe-gui plugin add ./packages/plugin-ping-a-human
-
-# a plain color theme instead of a skin: a JSON file the GUI reads on every open of the popover
 cp packages/color-themes/spacesheep-vivid-dark.json ~/.local/state/sessionpipe-gui/color-themes/
 ```
 
@@ -115,6 +124,7 @@ contracts are explained in the GUI's
 [skin-authoring.md](https://github.com/spacesheep-dev/sessionpipe-gui/blob/main/docs/skin-authoring.md)
 and [plugin-authoring.md](https://github.com/spacesheep-dev/sessionpipe-gui/blob/main/docs/plugin-authoring.md).
 
+Cutting a release (the npm scope, trusted publishing, the tag flow): [RELEASING.md](RELEASING.md).
 The screenshots above come from the GUI's demo data; how they are regenerated is in the GUI
 repo's [docs/screenshots/README.md](https://github.com/spacesheep-dev/sessionpipe-gui/blob/main/docs/screenshots/README.md).
 

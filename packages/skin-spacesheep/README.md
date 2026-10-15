@@ -11,7 +11,8 @@ of your own (copy the folder, change the `id`). Installing it over a GUI that ha
 built-in is refused: the id is taken.
 
 ```sh
-sessionpipe-gui skin add  packages/skin-spacesheep     # copied under <stateDir>/skins/spacesheep
+sessionpipe-gui skin add  @sessionpipe-gui/skin-spacesheep   # from npm, under <stateDir>/skins/spacesheep
+sessionpipe-gui skin add  packages/skin-spacesheep     # or this folder, copied
 sessionpipe-gui skin link packages/skin-spacesheep     # or a symlink, while editing
 ```
 

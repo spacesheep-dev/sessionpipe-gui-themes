@@ -26,8 +26,9 @@ fades and stops the typing.
 ## Install
 
 ```sh
-sessionpipe-gui theme add /path/to/sessionpipe-gui-themes/packages/office   # a folder: copied
-sessionpipe-gui theme add @sessionpipe-gui/theme-office                      # from npm, once published
+# Office ships inside the GUI's package: nothing to install on a current sessionpipe-gui.
+sessionpipe-gui view add @sessionpipe-gui/theme-office                       # from npm, on an older GUI
+sessionpipe-gui view add /path/to/sessionpipe-gui-themes/packages/office     # or a folder: copied
 ```
 
 Then open `/t/office`; it is listed on the rail under *experimental*.

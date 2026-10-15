@@ -9,14 +9,15 @@ deep indigo on a violet-black page, soft lavender on warm cream, lavender hairli
 flame highlight for search marks.
 
 ```sh
-sessionpipe-gui skin add  packages/skin-spacesheep-vivid
+sessionpipe-gui skin add  @sessionpipe-gui/skin-spacesheep-vivid   # from npm (or `sessionpipe-gui extras add spacesheep-vivid`)
+sessionpipe-gui skin add  packages/skin-spacesheep-vivid           # or this folder, copied
 sessionpipe-gui skin link packages/skin-spacesheep-vivid     # a symlink, while editing
 ```
 
 Then pick **Spacesheep Vivid** under *Installed* in the appearance popover (the gear on
 the rail). No restart.
 
-![preview](preview.png)
+![preview](https://raw.githubusercontent.com/spacesheep-dev/sessionpipe-gui-themes/main/packages/skin-spacesheep-vivid/preview.png)
 
 The palette and its ratios: [`../color-themes/README.md`](../color-themes/README.md),
 "Vivid, where it differs". `npm test` runs the token checker over `skin.json`.

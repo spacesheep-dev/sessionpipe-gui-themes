@@ -26,7 +26,7 @@ https://misha-air.local:7373/s/claude-code/8c13…?k=…
 2. Install the plugin into the GUI, on the machine that runs the receiver:
 
    ```sh
-   sessionpipe-gui plugin add @sessionpipe-gui/plugin-ping-a-human     # from npm
+   sessionpipe-gui plugin add @sessionpipe-gui/plugin-ping-a-human     # from npm (or `sessionpipe-gui extras add ping-a-human`)
    sessionpipe-gui plugin add ./packages/plugin-ping-a-human           # or this folder, built
    ```
 

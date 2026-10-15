@@ -1,0 +1,72 @@
+# SPDX-License-Identifier: Apache-2.0
+# A `v*` tag publishes every public package that is not on the registry yet, in dependency
+# order, through npm trusted publishing (OIDC: no token in this repo) with provenance, and
+# creates the GitHub Release from the CHANGELOG section. One-time setup and the manual
+# first publish (the scope must exist before this can run): RELEASING.md.
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write # the GitHub Release
+  id-token: write # npm trusted publishing + provenance
+
+concurrency:
+  group: release-${{ github.ref }}
+
+jobs:
+  publish:
+    name: gates · publish · release
+    runs-on: ubuntu-latest
+    environment: npm
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          registry-url: https://registry.npmjs.org
+          cache: npm
+
+      # Trusted publishing needs npm 11.5.1 or newer.
+      - run: npm install -g npm@latest && npm --version
+
+      - name: The tag is the version of every public package
+        run: |
+          set -e
+          tag="${GITHUB_REF_NAME#v}"
+          for f in packages/*/package.json; do
+            node -e '
+              const p = require(process.argv[1]);
+              if (p.private) process.exit(0);
+              if (p.version !== process.argv[2]) { console.error(`${p.name} is ${p.version}, the tag says ${process.argv[2]}`); process.exit(1); }
+            ' "$PWD/$f" "$tag"
+          done
+
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm run lint
+      - run: npm run build
+
+      - name: Playwright browsers
+        run: npx playwright install --with-deps chromium
+      - run: npm test
+
+      - name: Publish what the registry does not have yet
+        run: node scripts/publish-all.mjs --yes
+        env:
+          NPM_CONFIG_PROVENANCE: "true"
+
+      - name: GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -e
+          node scripts/release-notes.mjs "$GITHUB_REF_NAME" > /tmp/notes.md
+          for p in packages/*; do
+            node -e 'const p=require(process.argv[1]+"/package.json"); process.exit(p.private?1:0)' "$PWD/$p" && (cd "$p" && npm pack --silent --pack-destination /tmp/tarballs) || true
+          done
+          gh release create "$GITHUB_REF_NAME" --title "sessionpipe-gui-themes $GITHUB_REF_NAME" --notes-file /tmp/notes.md /tmp/tarballs/*.tgz

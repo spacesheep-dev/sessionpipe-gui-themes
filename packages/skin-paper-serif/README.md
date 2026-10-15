@@ -6,10 +6,11 @@ Serif 4, variable, roman and italic, under the SIL Open Font License), **shape**
 radius 2 px, one-pixel hairlines) and **density** (`comfortable`: rows 36 / 40 / 44 px),
 on a warm paper palette with a terracotta accent for *needs you*. Light only.
 
-![preview](preview.png)
+![preview](https://raw.githubusercontent.com/spacesheep-dev/sessionpipe-gui-themes/main/packages/skin-paper-serif/preview.png)
 
 ```sh
-sessionpipe-gui skin add  packages/skin-paper-serif
+sessionpipe-gui skin add  @sessionpipe-gui/skin-paper-serif   # from npm (or `sessionpipe-gui extras add paper-serif`)
+sessionpipe-gui skin add  packages/skin-paper-serif           # or this folder, copied
 sessionpipe-gui skin link packages/skin-paper-serif     # a symlink, while editing
 ```
 

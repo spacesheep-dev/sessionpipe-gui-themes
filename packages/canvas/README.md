@@ -96,7 +96,8 @@ in every state on two machines, subagents, and a tick that turns tools over, gro
 raises and clears attentions, ends and starts sessions. Query: `?tick=0` freezes it,
 `?speed=N`, `?extra=N` adds sessions (try `?extra=50`), `?scheme=light|dark`.
 
-In the real GUI: `sessionpipe-gui theme link <this folder>` and open `/t/canvas`.
+In the real GUI: `sessionpipe-gui view link <this folder>` and open `/t/canvas`. Canvas
+ships inside the GUI's package; on an older GUI, `sessionpipe-gui view add @sessionpipe-gui/theme-canvas`.
 
 ## How it is drawn
 

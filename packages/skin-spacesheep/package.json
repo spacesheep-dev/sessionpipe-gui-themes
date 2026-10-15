@@ -2,14 +2,32 @@
   "name": "@sessionpipe-gui/skin-spacesheep",
   "version": "0.1.0",
   "description": "A sessionpipe GUI skin: the colours of spacesheep.dev, dark and light. The same palette is the GUI's built-in default; this is the installable package.",
+  "keywords": [
+    "sessionpipe",
+    "sessionpipe-gui",
+    "sessionpipe-gui-skin"
+  ],
   "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/spacesheep-dev/sessionpipe-gui-themes.git",
+    "directory": "packages/skin-spacesheep"
+  },
+  "homepage": "https://github.com/spacesheep-dev/sessionpipe-gui-themes/tree/main/packages/skin-spacesheep#readme",
+  "bugs": {
+    "url": "https://github.com/spacesheep-dev/sessionpipe-gui-themes/issues"
+  },
   "type": "module",
+  "publishConfig": {
+    "access": "public"
+  },
   "files": [
     "skin.json",
     "preview.png",
     "README.md"
   ],
   "scripts": {
-    "test": "node ../color-themes/scripts/check.mjs --skin skin.json"
+    "test": "node ../color-themes/scripts/check.mjs --skin skin.json",
+    "prepublishOnly": "node ../../scripts/pack-check.mjs ."
   }
 }
