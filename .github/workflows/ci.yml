@@ -1,0 +1,46 @@
+# SPDX-License-Identifier: Apache-2.0
+# The gates every package must pass. The canvas suite drives its own dev harness on
+# :7421; the plugin tests run against a fake Channel and never reach Telegram.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  checks:
+    name: typecheck · lint · build · test
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm run lint
+      - run: npm run build
+
+      - name: Playwright browsers
+        run: npx playwright install --with-deps chromium
+
+      - run: npm test
+
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: test-results
+          path: packages/*/test-results
+          retention-days: 7

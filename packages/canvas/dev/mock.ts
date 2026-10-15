@@ -80,10 +80,10 @@ const HARNESSES = ["claude-code", "codex", "gemini-cli", "cursor"];
 /** Accounts per harness; claude-code has two so the agents lane shows a group. */
 const ACCOUNTS: Record<string, { id: string; email: string }[]> = {
   "claude-code": [
-    { id: "acct_7f3a9c", email: "misha@fictiontribe.com" },
-    { id: "acct_21bd04", email: "misha.petrov@gmail.com" },
+    { id: "acct_7f3a9c", email: "dev@example.com" },
+    { id: "acct_21bd04", email: "dev.home@example.com" },
   ],
-  codex: [{ id: "org-9kq2", email: "misha@fictiontribe.com" }],
+  codex: [{ id: "org-9kq2", email: "dev@example.com" }],
   "gemini-cli": [{ id: "ge-114", email: "" }],
   cursor: [{ id: "cu-02", email: "" }],
 };

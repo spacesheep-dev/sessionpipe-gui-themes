@@ -1,0 +1,8 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Security report
+    url: https://github.com/spacesheep-dev/sessionpipe-gui-themes/security/advisories/new
+    about: Anything that could leak a token or session content, or reach a machine without a passkey. Private.
+  - name: The GUI itself
+    url: https://github.com/spacesheep-dev/sessionpipe-gui/issues
+    about: The board, the receiver, control, TLS, setup, the extension installer.

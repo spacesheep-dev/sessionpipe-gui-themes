@@ -1,0 +1,15 @@
+{
+  "name": "@sessionpipe-gui/skin-spacesheep-vivid",
+  "version": "0.1.0",
+  "description": "A sessionpipe GUI skin: Spacesheep with coloured surfaces, dark and light.",
+  "license": "Apache-2.0",
+  "type": "module",
+  "files": [
+    "skin.json",
+    "preview.png",
+    "README.md"
+  ],
+  "scripts": {
+    "test": "node ../color-themes/scripts/check.mjs --skin skin.json"
+  }
+}

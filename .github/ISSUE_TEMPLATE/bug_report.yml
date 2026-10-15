@@ -1,0 +1,39 @@
+name: Bug report
+description: A view, colour theme or plugin here does something wrong.
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        If this could leak a token or session content, or deliver an answer to a machine without a passkey, do **not** file it here: see [SECURITY.md](../blob/main/SECURITY.md).
+  - type: dropdown
+    id: package
+    attributes:
+      label: Package
+      options:
+        - theme-canvas
+        - theme-office
+        - color-themes
+        - plugin-ping-a-human
+        - theme-types
+    validations:
+      required: true
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you did, what you saw, what you expected. Redact tokens and addresses before pasting.
+    validations:
+      required: true
+  - type: input
+    id: versions
+    attributes:
+      label: Versions
+      placeholder: theme-canvas 0.1.0 · sessionpipe-gui 0.1.0 · Node 22 · macOS 15
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Console or receiver output
+      render: text

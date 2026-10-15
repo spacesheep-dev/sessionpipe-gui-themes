@@ -267,7 +267,7 @@ facts, same motion table, same reading-distance test; only the drawings change.
 ## 12. Style toggle
 
 `style: "iso" | "figures"`, persisted per device in `api.local` under `style`, default
-`iso` until the owner picks. A `Segmented` control beside the `?` button: `iso · figures`.
+`iso` until the person picks. A `Segmented` control beside the `?` button: `iso · figures`.
 Both styles consume the same `Posture`, `useSeating`, calm budget, cursor order, tooltip
 and keyboard; the toggle swaps only the drawings and the room chrome. `Look` is ignored in
 iso.

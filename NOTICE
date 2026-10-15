@@ -1,0 +1,16 @@
+sessionpipe-gui-themes
+Copyright 2026 the sessionpipe-gui-themes contributors
+
+Licensed under the Apache License, Version 2.0. These are views, skins and plugins for
+sessionpipe-gui, a receiver that speaks the sessionpipe protocol. The protocol is by
+Michael Makarov and contributors (https://sessionpipe.org, spec CC BY 4.0); "sessionpipe"
+is a mark of Michael Makarov. This project is not part of the sessionpipe project and is
+not endorsed by it.
+
+Third-party software:
+
+- packages/plugin-ping-a-human bundles ping-a-human (https://www.npmjs.com/package/ping-a-human),
+  MIT License, Copyright (c) 2026 ping-a-human contributors. The full notice is in
+  packages/plugin-ping-a-human/THIRD_PARTY_NOTICES.md.
+- packages/color-themes carries colour values read from the spacesheep brand palette
+  (https://spacesheep.dev). No logo or wordmark of spacesheep's is used.

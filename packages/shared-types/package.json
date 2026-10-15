@@ -3,6 +3,11 @@
   "version": "0.1.0",
   "description": "Type-only mirror of the sessionpipe GUI's extension contracts (shared/theme-api.ts, shared/plugin-api.ts, shared/api.ts).",
   "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/spacesheep-dev/sessionpipe-gui-themes.git",
+    "directory": "packages/shared-types"
+  },
   "type": "module",
   "exports": {
     ".": "./theme-api.ts",

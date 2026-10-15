@@ -3,6 +3,11 @@
   "version": "0.1.0",
   "description": "Every machine a room, every live session a person at a desk. A sessionpipe GUI theme, drawn with the host's React.",
   "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/spacesheep-dev/sessionpipe-gui-themes.git",
+    "directory": "packages/office"
+  },
   "type": "module",
   "files": [
     "dist",

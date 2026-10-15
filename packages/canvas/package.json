@@ -3,6 +3,11 @@
   "version": "0.1.0",
   "description": "Every live session as a draggable window on an infinite canvas. A sessionpipe GUI theme.",
   "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/spacesheep-dev/sessionpipe-gui-themes.git",
+    "directory": "packages/canvas"
+  },
   "type": "module",
   "files": [
     "dist",

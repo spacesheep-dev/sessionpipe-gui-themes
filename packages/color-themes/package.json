@@ -4,8 +4,17 @@
   "private": true,
   "description": "Color themes for the sessionpipe GUI: token sets as JSON, dropped into <stateDir>/color-themes/.",
   "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/spacesheep-dev/sessionpipe-gui-themes.git",
+    "directory": "packages/color-themes"
+  },
   "type": "module",
-  "files": ["*.json", "README.md", "swatches.png"],
+  "files": [
+    "*.json",
+    "README.md",
+    "swatches.png"
+  ],
   "scripts": {
     "test": "node scripts/check.mjs"
   }

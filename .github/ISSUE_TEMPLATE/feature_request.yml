@@ -1,0 +1,24 @@
+name: Feature request
+description: Something a package here should do, or a new view, skin or plugin.
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: The problem
+      description: What you were trying to do and where it got in the way.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: What you would change
+      description: Optional. A sketch, a screenshot with marks on it, or a sentence. For a new package, say which kind (view, skin, plugin) and link a prototype if there is one.
+  - type: checkboxes
+    id: rules
+    attributes:
+      label: For a new package
+      options:
+        - label: Apache-2.0, SPDX headers, DCO sign-off.
+        - label: Loads nothing from the network at runtime; secrets only through `type: "secret"` settings or a config file outside the repo.
+        - label: The host's tokens by name; amber only for *needs you*; `prefers-reduced-motion` honoured.
