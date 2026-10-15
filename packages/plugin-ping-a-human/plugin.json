@@ -1,0 +1,49 @@
+{
+  "id": "ping-a-human",
+  "name": "ping-a-human",
+  "version": "0.1.0",
+  "kind": "plugin",
+  "api": 1,
+  "entry": "dist/index.js",
+  "description": "A Telegram message when a session needs you; tap Allow or Deny there and the answer waits beside the prompt as a suggestion you confirm with your passkey.",
+  "settings": [
+    {
+      "key": "configPath",
+      "label": "ping-a-human config",
+      "type": "string",
+      "default": "~/.config/ping-a-human/config.json",
+      "help": "Run `npx ping-a-human setup` once; it writes the bot token and chat id here."
+    },
+    { "key": "botToken", "label": "Bot token", "type": "secret", "help": "Optional: overrides the config file." },
+    { "key": "chatId", "label": "Chat id", "type": "string", "help": "Optional: overrides the config file." },
+    {
+      "key": "events",
+      "label": "Send a message for",
+      "type": "multiselect",
+      "options": ["needs_you", "question", "turn_error", "session_done", "flags", "control_delivered"],
+      "default": ["needs_you", "question", "turn_error"]
+    },
+    {
+      "key": "askOnPermission",
+      "label": "Ask Allow / Deny on a permission prompt",
+      "type": "boolean",
+      "default": true,
+      "help": "The tap becomes a suggestion in the GUI; nothing is sent to the machine until you confirm it with your passkey."
+    },
+    {
+      "key": "quietHours",
+      "label": "Quiet hours",
+      "type": "string",
+      "help": "Local time, e.g. 22:00-08:00. Empty: none."
+    },
+    { "key": "machines", "label": "Machines", "type": "string", "help": "Comma-separated names; empty: all." },
+    {
+      "key": "minSilenceS",
+      "label": "Wait before sending (seconds)",
+      "type": "number",
+      "default": 20,
+      "help": "A prompt answered at the desk within this time sends nothing."
+    },
+    { "key": "dryRun", "label": "Dry run", "type": "boolean", "default": false, "help": "Log instead of sending." }
+  ]
+}

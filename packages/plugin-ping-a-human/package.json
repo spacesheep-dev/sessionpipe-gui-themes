@@ -1,0 +1,25 @@
+{
+  "name": "@sessionpipe-gui/plugin-ping-a-human",
+  "version": "0.1.0",
+  "description": "A sessionpipe GUI plugin: Telegram messages when a session needs you, via ping-a-human, and Allow / Deny taps that come back as suggestions.",
+  "license": "Apache-2.0",
+  "type": "module",
+  "files": [
+    "dist",
+    "plugin.json",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "dev": "node scripts/build.mjs --watch",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "pretest": "node scripts/build.mjs",
+    "test": "node --test test/*.test.mjs"
+  },
+  "dependencies": {
+    "ping-a-human": "^0.1.6"
+  },
+  "devDependencies": {
+    "@sessionpipe-gui/theme-types": "0.1.0"
+  }
+}

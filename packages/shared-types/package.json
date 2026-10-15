@@ -1,15 +1,17 @@
 {
   "name": "@sessionpipe-gui/theme-types",
   "version": "0.1.0",
-  "description": "Type-only mirror of the sessionpipe GUI's theme contract (shared/theme-api.ts, shared/api.ts).",
+  "description": "Type-only mirror of the sessionpipe GUI's extension contracts (shared/theme-api.ts, shared/plugin-api.ts, shared/api.ts).",
   "license": "Apache-2.0",
   "type": "module",
   "exports": {
     ".": "./theme-api.ts",
-    "./api": "./api.ts"
+    "./api": "./api.ts",
+    "./plugin-api": "./plugin-api.ts"
   },
   "files": [
     "theme-api.ts",
+    "plugin-api.ts",
     "api.ts",
     "README.md"
   ]

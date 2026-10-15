@@ -226,6 +226,24 @@ export interface Snapshot {
   machines: MachineSummary[];
   stats: Stats;
   viewers?: Viewer[];
+  /** Plugins' open suggestions (shared/plugin-api.ts); present on the stream's first frame. */
+  suggestions?: Suggestion[];
+}
+
+/** A server plugin's suggested answer to an open permission (shared/plugin-api.ts). Advice
+ *  only: the receiver holds no key and signs nothing; a person confirms it in the GUI with
+ *  their passkey, which sends the ordinary `permission.answer`. Gone when the attention
+ *  closes. */
+export interface Suggestion {
+  session: SessionKey;
+  attentionId: string;
+  decision: "allow" | "deny";
+  /** Who suggested it, as the plugin words it: "Misha on Telegram". */
+  by: string;
+  /** The plugin that made it. */
+  plugin: string;
+  note?: string;
+  at: string;
 }
 
 /** What `GET /api/ui/stream` (SSE) sends. The `event:` field of each SSE frame is the
@@ -239,7 +257,8 @@ export type StreamMessage =
   | { kind: "machine"; machine: MachineSummary }
   | { kind: "stats"; stats: Stats }
   | { kind: "control"; message: ControlActivity }
-  | { kind: "viewers"; viewers: Viewer[] };
+  | { kind: "viewers"; viewers: Viewer[] }
+  | { kind: "suggestion"; suggestion: Suggestion };
 
 /** A browser connected to this GUI's stream right now: a phone on the LAN, this
  *  laptop's own tab. The receiver's reading of "devices", from the connection only;
