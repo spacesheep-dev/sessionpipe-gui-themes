@@ -12,7 +12,8 @@ import { build, context } from "esbuild";
 const root = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 const shim = (file) => path.join(root, "shims", file);
 
-/** react → shims/react.js, react/jsx-runtime → shims/jsx-runtime.js, react-dom/client → shims/react-dom-client.js */
+/** react → shims/react.js, react/jsx-runtime → shims/jsx-runtime.js, react-dom → shims/react-dom.js,
+ *  react-dom/client → shims/react-dom-client.js */
 const hostReact = {
   name: "host-react",
   setup(b) {
@@ -20,11 +21,11 @@ const hostReact = {
       react: shim("react.js"),
       "react/jsx-runtime": shim("jsx-runtime.js"),
       "react/jsx-dev-runtime": shim("jsx-runtime.js"),
+      "react-dom": shim("react-dom.js"),
       "react-dom/client": shim("react-dom-client.js"),
     };
-    b.onResolve({ filter: /^react(\/jsx(-dev)?-runtime)?$|^react-dom\/client$/ }, (args) => ({ path: map[args.path] }));
-    b.onResolve({ filter: /^react-dom$/ }, (args) => ({
-      errors: [{ text: `${args.path} is not shimmed; import createRoot from "react-dom/client"` }],
+    b.onResolve({ filter: /^react(\/jsx(-dev)?-runtime)?$|^react-dom(\/client)?$/ }, (args) => ({
+      path: map[args.path],
     }));
   },
 };

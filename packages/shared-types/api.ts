@@ -465,13 +465,52 @@ export interface Info {
     outbox: { path: string; sessions: number; enabled: boolean; events?: number } | null;
     demo: boolean;
   };
-  storage: { dir: string; bytes: number };
+  /** `bytes` is everything under `dir`: the event files, plus `attachments` (the images
+   *  uploaded from the composer, ROUTES.ui.attachments). Absent on older servers. */
+  storage: { dir: string; bytes: number; attachments?: number };
   wellKnown: Record<string, unknown>;
   control: { enabled: boolean; rpId: string; machines: number };
   /** TLS mode (`--tls`): the same port also answers https with a certificate from the
    *  GUI's own local CA, so passkeys work from a phone. Absent on older servers. */
   tls?: TlsInfo;
+  /** What sessionpipe calls this machine: `os.hostname()` without a `.local` / `.lan` /
+   *  `.home` suffix. A session whose `machine` matches runs here, so a file path on this
+   *  machine means something to it. Absent on older servers. */
+  hostname?: string;
 }
+
+// ---------- attachments (images sent beside a control prompt; shared/attachments.ts) ----------
+
+export type AttachmentType = "image/png" | "image/jpeg" | "image/gif" | "image/webp";
+
+/** An image uploaded from the composer (POST ROUTES.ui.attachments). The control
+ *  protocol carries text only, so the prompt names it instead: by `path` when the
+ *  session runs on this machine, by `url` otherwise (shared/attachments.ts). */
+export interface Attachment {
+  /** A ULID; the file is `<id>.<ext>` under `<stateDir>/attachments`. */
+  id: string;
+  type: AttachmentType;
+  ext: "png" | "jpg" | "gif" | "webp";
+  /** Absolute path on the machine the GUI runs on. */
+  path: string;
+  /** Absolute URL another machine can fetch: the https origin when TLS is on, else the
+   *  first LAN URL, with `?k=<ui key>` so no cookie is needed. */
+  url: string;
+  width: number;
+  height: number;
+  bytes: number;
+}
+
+/** One image at most; the composer refuses a bigger file before uploading. */
+export const ATTACHMENT_MAX_BYTES = 8 * 1024 * 1024;
+/** Images per message. */
+export const ATTACHMENTS_PER_MESSAGE = 6;
+export const ATTACHMENT_TYPES: Record<AttachmentType, Attachment["ext"]> = {
+  "image/png": "png",
+  "image/jpeg": "jpg",
+  "image/gif": "gif",
+  "image/webp": "webp",
+};
 
 /** What a page needs to get a phone onto the https origin (ROUTES.trust explains the steps). */
 export interface TlsInfo {
@@ -603,7 +642,14 @@ export const ROUTES = {
     /** First-run setup, this machine only (loopback or one of its own addresses; 403 otherwise):
      *  GET /status → SetupStatus; POST /tls/on, /tls/trust, /pair, /pair/cancel. */
     setup: "/api/ui/setup",
+    /** POST, UI key: an image as the raw body (`content-type: image/png|jpeg|gif|webp`) or
+     *  as multipart/form-data file parts → Attachment (one file), or { attachments } (several).
+     *  413 `too_large` over ATTACHMENT_MAX_BYTES, 415 `unsupported_type`, 400 `not_an_image`. */
+    attachments: "/api/ui/attachments",
   },
+  /** GET / DELETE /attachments/<id>.<ext>, UI key: the uploaded image itself (served
+   *  `private, immutable`), and taking it back. */
+  attachments: "/attachments",
 } as const;
 
 export const DEFAULT_PORT = 7373;

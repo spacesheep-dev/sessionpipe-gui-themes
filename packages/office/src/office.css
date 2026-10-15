@@ -805,37 +805,33 @@
   left: 62px;
   top: 14px;
 }
-.sp-office .ilist .cell-tip {
-  top: 100%;
-  left: 150px;
-}
-.sp-office .ilist-row:hover .cell-tip,
-.sp-office .ilist-row:focus-within .cell-tip {
-  visibility: visible;
-  transition: visibility 0s 150ms;
-}
 .sp-office .ilist-home {
   padding: 4px 0 0 150px;
   font-size: 11px;
   color: var(--fg-3);
 }
 
-/* ---------- tooltip ---------- */
+/* ---------- the hover card: in document.body, above everything, the host's tokens ---------- */
 
-.sp-office .cell-tip {
+.sp-office .tip-anchor {
   position: absolute;
-  z-index: 30;
-  top: 100%;
+  width: 0;
+  height: 0;
+}
+.sp-office-tip {
+  position: fixed;
+  z-index: 60;
   left: 0;
+  top: 0;
   width: max-content;
   min-width: 160px;
   max-width: 260px;
-  margin-top: 2px;
   padding: 7px 10px;
   border: 1px solid var(--line-2);
   border-radius: 6px;
   background: var(--bg-2);
   color: var(--fg-2);
+  font-family: var(--font-ui);
   font-size: var(--text-xs);
   line-height: 1.4;
   text-align: left;
@@ -843,46 +839,27 @@
   display: flex;
   flex-direction: column;
   gap: 1px;
-  visibility: hidden;
   pointer-events: none;
 }
-.sp-office .cell-tip b {
+.sp-office-tip b {
   color: var(--fg);
   font-weight: 600;
 }
-.sp-office .cell-tip code {
+.sp-office-tip code,
+.sp-office-tip .mono {
+  font-family: var(--font-mono);
+  font-size: 0.875em;
   color: var(--fg);
 }
-.sp-office .cell-tip-attn {
+.sp-office-tip .num {
+  font-variant-numeric: tabular-nums;
+}
+.sp-office-tip .tip-attn {
   color: var(--needs-fg);
 }
-.sp-office .cell-helper .cell-tip {
-  left: -60px;
-}
-.sp-office .cell-link:hover .cell-tip,
-.sp-office .cell-link:focus-visible .cell-tip,
-.sp-office .cell-helper:hover .cell-tip,
-.sp-office .cell-helper:focus-visible .cell-tip {
-  visibility: visible;
-  transition: visibility 0s 150ms;
-}
-/* iso: the tooltip hangs under the nameplate, outside the clipped link */
-.sp-office .icell .cell-tip {
-  top: calc(96px * var(--o-scale));
-  left: calc(10px * var(--o-scale));
-}
-.sp-office .icell:hover .cell-tip,
-.sp-office .icell:focus-within .cell-tip {
-  visibility: visible;
-  transition: visibility 0s 150ms;
-}
-.sp-office .icell-helper .cell-tip {
-  left: -40px;
-}
-.sp-office .icell-helper:hover .cell-tip,
-.sp-office .icell-helper:focus-visible .cell-tip {
-  visibility: visible;
-  transition: visibility 0s 150ms;
+.sp-office-tip mark {
+  background: var(--needs-bg);
+  color: var(--fg);
 }
 
 /* ---------- legend ---------- */

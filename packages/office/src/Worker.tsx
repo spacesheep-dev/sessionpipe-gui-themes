@@ -3,7 +3,8 @@
 // the chair behind them, the side table with helpers, the nameplate. Also the pieces both
 // styles share: positions (`CellPos`), the nameplate, the tooltip and the aria label.
 import type { SessionSummary } from "@sessionpipe-gui/theme-types/api";
-import type { CSSProperties } from "react";
+import { type CSSProperties, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { sessionHref, useApi } from "./api";
 import { Redacted, SessionLink } from "./bits";
 import { ATTENTION_LABEL, durShort, harnessMark, modelShort, STATE_LABEL, since } from "./format";
@@ -13,6 +14,7 @@ import { cutLeft, derivePosture, type Look, type Posture, screenText } from "./p
 /** The door's centre line in room coordinates (an 18 px gap at x = 16). */
 export const DOOR_X = 16 + 9;
 const TITLE_LINE = 26;
+const TIP_DELAY_MS = 150;
 
 /** Where a cell sits in its room, and where its walker enters: all in logical px (the
  *  room's --o-scale multiplies on the way to the page). */
@@ -193,50 +195,107 @@ export function Nameplate({ s, p }: { s: SessionSummary; p: Posture }) {
   );
 }
 
+/** The hover card. It listens on its parent element (the desk's link or cell) and renders
+ *  into document.body, fixed, so no nameplate or neighbouring desk can paint over it;
+ *  positioned under the parent's box and flipped to stay inside the viewport. The host's
+ *  tokens live on :root, so the card is styled by its own top-level class. */
 export function Tooltip({ s, p, now, helper }: { s: SessionSummary; p: Posture; now: number; helper?: boolean }) {
   const api = useApi();
   const mark = harnessMark(s.harness);
   const repo = api.format.repoBranch(s);
+  const anchor = useRef<HTMLSpanElement>(null);
+  const card = useRef<HTMLDivElement>(null);
+  const [at, setAt] = useState<{ x: number; y: number; above: number } | null>(null);
+
+  useEffect(() => {
+    const host = anchor.current?.parentElement;
+    if (!host) return;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    const show = () => {
+      if (timer) clearTimeout(timer);
+      timer = setTimeout(() => {
+        const r = host.getBoundingClientRect();
+        setAt({ x: r.left, y: r.bottom + 2, above: r.top - 2 });
+      }, TIP_DELAY_MS);
+    };
+    const hide = () => {
+      if (timer) clearTimeout(timer);
+      timer = null;
+      setAt(null);
+    };
+    host.addEventListener("mouseenter", show);
+    host.addEventListener("mouseleave", hide);
+    host.addEventListener("focusin", show);
+    host.addEventListener("focusout", hide);
+    window.addEventListener("scroll", hide, true);
+    return () => {
+      if (timer) clearTimeout(timer);
+      host.removeEventListener("mouseenter", show);
+      host.removeEventListener("mouseleave", hide);
+      host.removeEventListener("focusin", show);
+      host.removeEventListener("focusout", hide);
+      window.removeEventListener("scroll", hide, true);
+    };
+  }, []);
+
+  // measured once it exists: slide left off the right edge, flip above off the bottom
+  useLayoutEffect(() => {
+    const el = card.current;
+    if (!el || !at) return;
+    const r = el.getBoundingClientRect();
+    const x = Math.max(8, Math.min(at.x, window.innerWidth - 8 - r.width));
+    const y = at.y + r.height > window.innerHeight - 8 ? Math.max(8, at.above - r.height) : at.y;
+    el.style.transform = `translate(${Math.round(x)}px, ${Math.round(y)}px)`;
+    el.style.visibility = "visible";
+  }, [at]);
+
   return (
-    <span className="cell-tip" role="tooltip">
-      <b>{api.format.title(s)}</b>
-      <span>
-        {helper ? "subagent · " : ""}
-        {mark.label}
-        {s.model ? ` · ${modelShort(s.model)}` : ""}
-      </span>
-      <span>
-        {STATE_LABEL[p.state]} · {since(api, s.stateSince, now)}
-      </span>
-      {s.currentTool && (
-        <span>
-          <code>{s.currentTool.tool}</code> · {since(api, s.currentTool.since, now)}
-        </span>
-      )}
-      {p.attention && (
-        <span className="cell-tip-attn">
-          {ATTENTION_LABEL[p.attention.kind] ?? p.attention.kind}
-          {p.attention.message ? (
-            <>
-              {" · "}
-              <Redacted text={p.attention.message} />
-            </>
-          ) : null}
-        </span>
-      )}
-      {repo && <span className="mono">{repo}</span>}
-      <span className="num">
-        {[
-          plural(s.counts.turns, "turn"),
-          plural(s.counts.tools, "tool"),
-          plural(s.counts.toolErrors, "error"),
-          plural(s.counts.filesChanged, "file"),
-          plural(s.children, "subagent"),
-        ]
-          .filter(Boolean)
-          .join(" · ")}
-      </span>
-    </span>
+    <>
+      <span ref={anchor} className="tip-anchor" aria-hidden="true" />
+      {at &&
+        createPortal(
+          <div ref={card} className="sp-office-tip" role="tooltip" style={{ visibility: "hidden" }}>
+            <b>{api.format.title(s)}</b>
+            <span>
+              {helper ? "subagent · " : ""}
+              {mark.label}
+              {s.model ? ` · ${modelShort(s.model)}` : ""}
+            </span>
+            <span>
+              {STATE_LABEL[p.state]} · {since(api, s.stateSince, now)}
+            </span>
+            {s.currentTool && (
+              <span>
+                <code>{s.currentTool.tool}</code> · {since(api, s.currentTool.since, now)}
+              </span>
+            )}
+            {p.attention && (
+              <span className="tip-attn">
+                {ATTENTION_LABEL[p.attention.kind] ?? p.attention.kind}
+                {p.attention.message ? (
+                  <>
+                    {" · "}
+                    <Redacted text={p.attention.message} />
+                  </>
+                ) : null}
+              </span>
+            )}
+            {repo && <span className="mono">{repo}</span>}
+            <span className="num">
+              {[
+                plural(s.counts.turns, "turn"),
+                plural(s.counts.tools, "tool"),
+                plural(s.counts.toolErrors, "error"),
+                plural(s.counts.filesChanged, "file"),
+                plural(s.children, "subagent"),
+              ]
+                .filter(Boolean)
+                .join(" · ")}
+            </span>
+          </div>,
+          document.body,
+        )}
+    </>
   );
 }
 
