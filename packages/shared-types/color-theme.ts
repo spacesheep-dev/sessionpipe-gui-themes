@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
 // A color theme is a set of the design tokens in web/src/styles/tokens.css, like a VS
 // Code color theme: a name, the scheme it is for, and the custom properties it sets.
-// Built-ins live in web/src/lib/colorTheme.ts; custom ones are JSON files the server
-// reads from <stateDir>/color-themes/*.json and serves at /api/ui/color-themes.
+// Custom ones are JSON files the server reads from <stateDir>/color-themes/*.json and
+// serves at /api/ui/color-themes; since skins (shared/skin-api.ts) they are also listed
+// by GET /api/ui/skins as token-only skins, and the built-ins live in shared/skins-builtin.ts.
 
 /** Every colour custom property of tokens.css. A theme may set any subset; the scheme's
  *  defaults fill the rest. */
@@ -21,6 +22,7 @@ export const COLOR_TOKEN_NAMES = [
   "--needs-fg",
   "--needs-bg",
   "--needs-line",
+  "--needs-ink",
   "--state-working",
   "--state-working-bg",
   "--state-stale",
@@ -44,6 +46,8 @@ export const COLOR_TOKEN_NAMES = [
   "--mark",
   "--mark-fg",
   "--shadow",
+  "--qr-bg",
+  "--qr-fg",
 ] as const;
 
 export type ColorTokenName = (typeof COLOR_TOKEN_NAMES)[number];
@@ -66,7 +70,8 @@ export interface ColorThemesResponse {
 export const COLOR_THEME_ID = /^[a-z][a-z0-9-]{1,40}$/;
 
 /** A CSS colour value we accept: a keyword or function, no braces, semicolons or url(). */
-const TOKEN_VALUE = /^[A-Za-z0-9#%.,\s()/+-]{1,120}$/;
+export const COLOR_TOKEN_VALUE = /^[A-Za-z0-9#%.,\s()/+-]{1,120}$/;
+const TOKEN_VALUE = COLOR_TOKEN_VALUE;
 
 /** The theme a JSON document describes, or the reason it is refused. At least `--bg`
  *  and `--fg` must be set, and every key must be a token name from tokens.css. */

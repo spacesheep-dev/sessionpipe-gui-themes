@@ -77,3 +77,8 @@ sessionpipe-gui plugin link packages/plugin-ping-a-human   # then Reload plugins
 A plugin is code running in the receiver process, with everything that machine has. This
 one reads one config file, talks to `api.telegram.org`, and logs nothing that contains the
 token.
+
+## Third-party
+
+`dist/index.js` bundles [ping-a-human](https://www.npmjs.com/package/ping-a-human) (MIT);
+its notice is in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).

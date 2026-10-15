@@ -2,6 +2,8 @@
 // Pointer, wheel and keyboard, turned into calls on the canvas. One pointer drags a
 // window, a zone or the canvas; two pointers pinch. Nothing here touches the DOM beyond
 // pointer capture and cursors.
+
+import type { ThemeApi } from "@sessionpipe-gui/theme-types";
 import { GRID, type Viewport } from "./types";
 import { clamp } from "./util";
 
@@ -15,6 +17,10 @@ export type Hit =
 
 export interface InputHost {
   root: HTMLElement;
+  /** The host's keymap (ThemeApi.shortcuts): when present the canvas registers its keys
+   *  there, so they show in `?` and on /shortcuts and can be rebound; without it the
+   *  keydown listener below handles them. */
+  shortcuts?: ThemeApi["shortcuts"];
   vp(): Viewport;
   panBy(dx: number, dy: number): void;
   zoomAt(sx: number, sy: number, factor: number): void;
@@ -311,6 +317,47 @@ export function attachInput(host: InputHost): () => void {
     const a = document.activeElement;
     return !a || a === document.body || a === document.documentElement || root.contains(a);
   };
+
+  // The keys, through the host's keymap when it has one (listed in `?`, rebindable), else
+  // through the keydown listener below. Space (hold to pan) and Esc stay on the listener
+  // either way: one is a held key, the other the host's own.
+  const act =
+    (fn: () => void, commit = true) =>
+    () => {
+      if (!ours() || host.busyTyping()) return;
+      fn();
+      if (commit) host.commit();
+    };
+  const nudge = (dx: number, dy: number) => act(() => host.nudgeFocused(dx, dy));
+  const far = GRID * 4;
+  const unregister = host.shortcuts?.register([
+    { id: "fit", label: "Fit everything", keys: ["0"], run: act(() => host.fit()) },
+    { id: "zoom-in", label: "Zoom in", keys: ["plus", "="], run: act(() => host.zoomStep(1)) },
+    { id: "zoom-out", label: "Zoom out", keys: ["-", "_"], run: act(() => host.zoomStep(-1)) },
+    { id: "left", label: "Move the focused window left", keys: ["left"], run: nudge(-GRID, 0), hint: "one cell" },
+    { id: "right", label: "Move the focused window right", keys: ["right"], run: nudge(GRID, 0), hint: "one cell" },
+    { id: "up", label: "Move the focused window up", keys: ["up"], run: nudge(0, -GRID), hint: "one cell" },
+    { id: "down", label: "Move the focused window down", keys: ["down"], run: nudge(0, GRID), hint: "one cell" },
+    { id: "left-far", label: "Move left, four cells", keys: ["shift+left"], run: nudge(-far, 0) },
+    { id: "right-far", label: "Move right, four cells", keys: ["shift+right"], run: nudge(far, 0) },
+    { id: "up-far", label: "Move up, four cells", keys: ["shift+up"], run: nudge(0, -far) },
+    { id: "down-far", label: "Move down, four cells", keys: ["shift+down"], run: nudge(0, far) },
+    { id: "open", label: "Open the focused window", keys: ["enter"], run: act(() => host.enterFocused()) },
+    {
+      id: "delete",
+      label: "Delete the selected link or node",
+      keys: ["backspace", "delete"],
+      run: act(() => {
+        host.deleteSelected();
+      }),
+    },
+    { id: "allow", label: "Allow the focused prompt", keys: ["a"], run: act(() => host.answerFocused("allow"), false) },
+    { id: "deny", label: "Deny the focused prompt", keys: ["d"], run: act(() => host.answerFocused("deny"), false) },
+    { id: "search", label: "Search the canvas", keys: ["/"], run: act(() => host.focusSearch(), false) },
+    { id: "legend", label: "Legend", keys: ["?"], run: act(() => host.toggleLegend(), false) },
+  ]);
+  const viaHost = !!unregister;
+
   const onKey = (e: KeyboardEvent) => {
     if (!ours()) return;
     const t = e.target as HTMLElement | null;
@@ -326,6 +373,7 @@ export function attachInput(host: InputHost): () => void {
     }
     if (e.metaKey || e.ctrlKey || e.altKey) return;
     if (host.busyTyping()) return;
+    if (viaHost && e.key !== " " && e.key !== "Escape") return;
     const step = e.shiftKey ? GRID * 4 : GRID;
     switch (e.key) {
       case "Backspace":
@@ -426,6 +474,7 @@ export function attachInput(host: InputHost): () => void {
     root.removeEventListener("pointercancel", onUp);
     root.removeEventListener("wheel", onWheel);
     document.removeEventListener("keydown", onKey);
+    unregister?.();
     document.removeEventListener("keyup", onKeyUp);
     root.removeEventListener("dblclick", onDbl);
     root.removeEventListener("pointerover", onOver);

@@ -11,6 +11,7 @@
 // whose major is newer than its own.
 
 import type {
+  Attachment,
   ControlActivity,
   MachineSummary,
   SessionDetail,
@@ -60,6 +61,12 @@ export interface ThemeSnapshot {
   scheme: "dark" | "light";
   /** Browsers connected to this GUI right now (phones, laptops); `current` marks this one. */
   viewers: readonly Viewer[];
+  /** The app-wide tier lens (Settings › Tier lens): what a receiver at this tier would
+   *  have got; null = everything. A view may ignore it. Absent on older hosts. */
+  tierLens?: 0 | 1 | 2 | 3 | null;
+  /** Simple hides what most people never touch (collapse HUD extras into one menu, drop
+   *  the style switch); advanced is everything. Absent on older hosts. */
+  mode?: "simple" | "advanced";
 }
 
 /** What a control call can do from this page. `ok: false` carries the reason the host
@@ -136,6 +143,27 @@ export interface ThemeApi {
       machineId: string,
       opts: { harness: string; cwd: string; text: string },
     ): Promise<ControlActivity & { session: SessionKey }>;
+    /** Upload an image (PNG, JPEG, GIF or WebP, ≤ 8 MB) to send beside a prompt. The
+     *  protocol carries text only: name the result in `text` the way
+     *  shared/attachments.ts `composePrompt` does (its `path` when the session runs on
+     *  the GUI's machine, its `url` otherwise), and the host draws it as a thumbnail.
+     *  Absent on older hosts. */
+    attach?(file: Blob): Promise<Attachment>;
+  };
+
+  /** The host's keymap (web/src/lib/shortcuts.ts). `register` adds the view's own keys
+   *  while it is mounted: they are listed in the `?` help and on /shortcuts under the
+   *  view's name, a person can rebind them there, and the host dispatches them (ignoring
+   *  text fields) so the view needs no keydown listener of its own. On the view's page
+   *  its keys shadow the host's for the same chord. `keys` are chord strings, "a",
+   *  "shift+enter", "mod+k", or two in a row, "g b"; `mod` is ⌘ on a Mac, ctrl elsewhere.
+   *  Returns the function that removes them (the host also removes them on unmount).
+   *  `active()` is every action's bindings in force, by id: the view's own under their
+   *  short ids, the host's under theirs ("palette.toggle", "list.down", …), so a view can
+   *  show the right hints. Present on hosts that have the keymap. */
+  shortcuts?: {
+    register(actions: ViewShortcut[]): () => void;
+    active(): Record<string, string[]>;
   };
 
   /** The host's React and ReactDOM, for themes that want them without bundling their
@@ -154,6 +182,18 @@ export interface ThemeApi {
      *  "Claude Code"; null for a harness without one (draw the monogram then). */
     harnessIcon?(harness: string): { svg: string; name: string } | null;
   };
+}
+
+/** One key a view registers (ThemeApi.shortcuts). */
+export interface ViewShortcut {
+  /** `[a-z][a-z0-9._-]*`, unique within the view. */
+  id: string;
+  label: string;
+  /** Default bindings; a person may change them on /shortcuts. */
+  keys: string[];
+  run(): void;
+  /** One line of help. */
+  hint?: string;
 }
 
 export interface OpenSessionOptions {
@@ -176,6 +216,13 @@ export interface InstalledTheme extends ThemeManifest {
   dir?: string;
   /** Linked from a folder for development (changes show on reload). */
   linked?: boolean;
+  /** Shipped with the GUI (dist/bundled/views/<id>), not installed by the person: listed
+   *  after their own installs (an install of the same id overrides it), `source: "bundled"`,
+   *  cannot be removed, only disabled. */
+  bundled?: boolean;
+  /** Turned off (config.json `disabled`): kept in the list for the Views page, but off the
+   *  rail, and /t/<id> says so instead of mounting it. */
+  disabled?: boolean;
   /** Why this entry cannot be loaded (bad manifest, api too new, …); such a theme is
    *  listed so the problem is visible, but gets no nav entry. */
   error?: string;
@@ -190,6 +237,9 @@ export const THEME_ROUTES = {
   files: "/themes",
   /** POST /api/ui/themes/reload (loopback): re-read manifests */
   reload: "/api/ui/themes/reload",
+  /** POST /api/ui/themes/:id/disable | /enable (loopback): hide a view (a bundled one
+   *  cannot be removed) or show it again → { themes } */
+  toggle: "/api/ui/themes",
 } as const;
 
 export const THEME_ID_RE = /^[a-z][a-z0-9-]{1,40}$/;

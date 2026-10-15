@@ -3,6 +3,10 @@
   "private": true,
   "description": "Themes for the sessionpipe GUI: ES-module plugins loaded at runtime through the ThemeApi.",
   "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/spacesheep-dev/sessionpipe-gui-themes.git"
+  },
   "type": "module",
   "engines": {
     "node": ">=20"

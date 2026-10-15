@@ -1109,6 +1109,9 @@ class Canvas implements InputHost {
   private sayTimer: ReturnType<typeof setTimeout> | undefined;
 
   // ---------- InputHost ----------
+  get shortcuts(): ThemeApi["shortcuts"] {
+    return this.api.shortcuts;
+  }
 
   vp() {
     return this.view;

@@ -17,16 +17,26 @@ it actually sits on (`--bg-2`, `--bg-3`), not only on the page.
 
 ![swatches](swatches.png)
 
-## Install
+## Skins, and these plain files
+
+The GUI now ships **Spacesheep built in as its default skin** (both schemes in one entry
+that follows the appearance), and the same palettes are packaged as skins here:
+[`../skin-spacesheep`](../skin-spacesheep) and [`../skin-spacesheep-vivid`](../skin-spacesheep-vivid)
+(`sessionpipe-gui skin add packages/skin-spacesheep-vivid`). The four JSON files in this
+folder are the **plain-file alternative**: one scheme each, no fonts or shape, dropped
+into the state dir by hand. They stay the source the skins are generated from, and a
+GUI lists them beside the skins as token-only skins (`source: "color-theme"`).
+
+## Install the plain files
 
 ```sh
 cp packages/color-themes/spacesheep-*.json ~/.local/state/sessionpipe-gui/color-themes/
 ```
 
-(or, when it exists, `sessionpipe-gui color-theme add packages/color-themes/spacesheep-dark.json`).
-The server reads the folder on every `GET /api/ui/color-themes`, so no restart: open the
-quick settings (the gear on the rail or the tab bar) and pick **Spacesheep · dark** or
-**Spacesheep · light** under *custom*. A color theme forces its scheme while applied.
+The server reads the folder on every open of the appearance popover from the receiver
+machine, so no restart: open the quick settings (the gear on the rail or the tab bar) and
+pick **Spacesheep** (dark or light) under *Installed*. A single-scheme file forces its
+scheme while applied.
 
 ## The palette
 

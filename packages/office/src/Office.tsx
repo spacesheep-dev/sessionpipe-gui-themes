@@ -199,7 +199,7 @@ export function Office({ api }: { api: ThemeApi }) {
   }, [roomNames, live, leaving, slots, postures, width, style, machines, all, now]);
 
   const open = useCallback((key: SessionKey) => api.openSession(key), [api]);
-  const { cursor } = useListNav(rooms.keys, open);
+  const { cursor } = useListNav(rooms.keys, open, true, api.shortcuts);
   const needs = live.filter((s) => s.state === "needs_you").length;
   const working = live.filter((s) => s.state === "working").length;
 
@@ -210,12 +210,17 @@ export function Office({ api }: { api: ThemeApi }) {
     return () => clearTimeout(t);
   }, [needs]);
 
-  // `?` toggles the legend; Esc closes it (the host's Esc also clicks [data-dismiss]).
+  // `?` toggles the legend, through the host's keymap when it has one (listed in `?`,
+  // rebindable), else a window listener; Esc closes it (the host's Esc also clicks
+  // [data-dismiss]).
   useEffect(() => {
+    const viaHost = api.shortcuts?.register([
+      { id: "legend", label: "Legend", keys: ["?"], run: () => setLegend((v) => !v), hint: "what the postures mean" },
+    ]);
     const onKey = (e: KeyboardEvent) => {
       const el = e.target as HTMLElement | null;
       if (e.metaKey || e.ctrlKey || el?.tagName === "INPUT" || el?.tagName === "TEXTAREA") return;
-      if (e.key === "?") {
+      if (e.key === "?" && !viaHost) {
         e.preventDefault();
         setLegend((v) => !v);
       } else if (e.key === "Escape") {
@@ -223,8 +228,11 @@ export function Office({ api }: { api: ThemeApi }) {
       }
     };
     window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, []);
+    return () => {
+      window.removeEventListener("keydown", onKey);
+      viaHost?.();
+    };
+  }, [api]);
 
   const band = hourBand(now);
   const classes = ["sp-office", hidden ? "office--paused" : ""].filter(Boolean).join(" ");
