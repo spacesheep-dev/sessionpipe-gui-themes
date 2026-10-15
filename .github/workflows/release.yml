@@ -56,6 +56,7 @@ jobs:
       - run: npm test
 
       - name: Publish what the registry does not have yet
+        if: vars.PUBLISH_NPM == 'true'
         run: node scripts/publish-all.mjs --yes
         env:
           NPM_CONFIG_PROVENANCE: "true"
