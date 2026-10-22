@@ -1,39 +1,47 @@
 // SPDX-License-Identifier: Apache-2.0
-// One session as a window: title bar, what's happening, open attention, a prompt line
-// when the host can carry a command to it, the messages sent, counts. The DOM is built
-// once; `update` touches only what changed (a signature per session), and `tick`
-// updates the elapsed numerals once a second.
+// One session as a native panel: a 32 px title bar (state glyph, label dot, title, the
+// harness mark, ↗ and ⋯ on hover), one muted line of what the grouping doesn't already
+// say with the time on the right, and up to three lines of body by state: the request
+// with Allow / Deny when it needs you, the live tail while it works, the last reply when
+// it rests. Expanded, it shows the session's rows and the prompt. The DOM is built once;
+// `update` touches only what changed (a signature), `tick` the time once a second.
 import type { ThemeApi } from "@sessionpipe-gui/theme-types";
-import type { ControlActivity, SessionSummary } from "@sessionpipe-gui/theme-types/api";
+import type { ControlActivity, LabelColor, SessionSummary } from "@sessionpipe-gui/theme-types/api";
 import { Detail } from "./detail";
 import { durShort } from "./events";
+import { repoParts } from "./map";
+import type { ViewId } from "./types";
 import { el, ms, oneLine, setClass, setText } from "./util";
 
-const ATTENTION_LABEL: Record<string, string> = {
-  permission: "permission",
-  question: "question",
-  elicitation: "input wanted",
-  idle: "idle prompt",
-  error: "error",
-};
-
 const KIND_LABEL: Record<string, string> = {
-  prompt: "prompt",
-  "permission.answer": "answer",
-  cancel: "cancel",
-  start: "start",
-  "key.add": "trust a device",
+  prompt: "Prompt",
+  "permission.answer": "Answer",
+  cancel: "Cancel",
+  start: "Start",
+  "key.add": "Trust a device",
 };
 
-/** Messages shown under the prompt line: the latest, or three when expanded. */
-const ACTS_SHOWN = 1;
-const ACTS_EXPANDED = 3;
+const ICON_OPEN =
+  '<svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 3.5h6.5V10M12.5 3.5 4 12"/></svg>';
+const ICON_MORE =
+  '<svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><circle cx="3.5" cy="8" r="1.25"/><circle cx="8" cy="8" r="1.25"/><circle cx="12.5" cy="8" r="1.25"/></svg>';
 
 export interface WinHooks {
   onOpen(): void;
-  onClose(): void;
-  /** The "n done" chip: show or fold the finished subagents. */
-  onToggleDone(): void;
+  onMore(at: { x: number; y: number }): void;
+}
+
+/** What the canvas knows that the session doesn't: the view (line 2 depends on it), the
+ *  label, whether this page can carry a command, the parent it was split from. */
+export interface WinContext {
+  now: number;
+  view: ViewId;
+  label?: { color: LabelColor; name: string };
+  activities: readonly ControlActivity[];
+  /** A reason to say in this window only when it differs from the one the status bar says. */
+  ownReason?: string;
+  /** A child session whose orchestrator isn't on the canvas. */
+  parentTitle?: string;
 }
 
 export class WinView {
@@ -43,119 +51,106 @@ export class WinView {
   session: SessionSummary;
   detail: Detail | undefined;
   private sig = "";
-  private bar: HTMLElement;
+  private glyph: HTMLElement;
   private dot: HTMLElement;
   private title: HTMLElement;
-  private meta: HTMLElement;
+  private mark: HTMLElement;
+  private markFor = "";
+  private metaText: HTMLElement;
+  private metaErr: HTMLElement;
+  private time: HTMLElement;
   private body: HTMLElement;
-  private now: HTMLElement;
-  private nowElapsed: HTMLElement;
-  private cancel: HTMLAnchorElement;
   private text: HTMLElement;
-  private att: HTMLElement;
-  private attText: HTMLElement;
-  private allow: HTMLAnchorElement;
-  private deny: HTMLAnchorElement;
+  private ask: HTMLElement;
+  private askText: HTMLElement;
+  private askActs: HTMLElement;
+  private wait: HTMLElement;
   private ctl: HTMLElement;
-  private ctlRow: HTMLElement;
   private input: HTMLInputElement;
   private reason: HTMLElement;
   private acts: HTMLElement;
-  private foot: HTMLElement;
-  private footLeft: HTMLElement;
-  private footRight: HTMLElement;
-  private kids: HTMLButtonElement;
-  private latest: HTMLElement;
-  private ageBucket = -1;
-  /** What the elapsed numeral counts from, if anything. */
+  /** What the time on the right counts from. */
   private since: number | undefined;
-  private sincePrefix = "";
   private canControl = false;
   private busy = false;
   private error = "";
+  private ctx: WinContext;
 
   constructor(
     private api: ThemeApi,
     session: SessionSummary,
     private hooks: WinHooks,
+    ctx: WinContext,
   ) {
     this.key = session.key;
     this.session = session;
-    const sub = !!session.parentId;
-    this.el = el("div", `cv-win${sub ? " is-sub" : ""}`);
+    this.ctx = ctx;
+    this.el = el("div", "cv-win");
     this.el.dataset.key = session.key;
     this.el.tabIndex = 0;
     this.el.setAttribute("role", "group");
 
-    this.bar = el("div", "cv-win-bar");
-    this.dot = el("span", "cv-dot");
+    const bar = el("div", "cv-win-bar");
+    this.glyph = el("span", "dot cv-win-glyph");
+    this.glyph.setAttribute("aria-hidden", "true");
+    this.dot = el("span", "label-dot cv-win-label");
+    this.dot.hidden = true;
     this.title = el("span", "cv-win-title");
-    this.meta = el("span", "cv-win-meta");
-    const open = el("button", "cv-win-open", "→");
-    open.type = "button";
-    open.title = "Open the session";
-    open.setAttribute("aria-label", "Open the session");
+    this.mark = el("span", "cv-win-mark");
+    this.mark.setAttribute("aria-hidden", "true");
+    const open = iconBtn("cv-win-open", ICON_OPEN, "Open beside");
     open.addEventListener("click", (e) => {
       e.stopPropagation();
       this.hooks.onOpen();
     });
-    this.latest = el("span", "cv-win-latest", "latest");
-    this.latest.hidden = true;
-    const close = el("button", "cv-win-close", "×");
-    close.type = "button";
-    close.title = "Hide until it changes state";
-    close.setAttribute("aria-label", "Hide until it changes state");
-    close.addEventListener("click", (e) => {
+    const more = iconBtn("cv-win-more", ICON_MORE, "More");
+    more.addEventListener("click", (e) => {
       e.stopPropagation();
-      this.hooks.onClose();
+      const r = more.getBoundingClientRect();
+      this.hooks.onMore({ x: r.left, y: r.bottom + 4 });
     });
-    this.bar.append(this.dot, this.title, this.meta, this.latest, open, close);
+    const tools = el("span", "cv-win-tools");
+    tools.append(open, more);
+    bar.append(this.glyph, this.dot, this.title, this.mark, tools);
+
+    const meta = el("div", "cv-win-meta");
+    const left = el("span", "cv-win-meta-l");
+    this.metaText = el("span", "cv-win-meta-t");
+    this.metaErr = el("span", "cv-win-err");
+    left.append(this.metaText, this.metaErr);
+    this.time = el("span", "cv-win-time num");
+    meta.append(left, this.time);
 
     this.body = el("div", "cv-win-body");
-    this.now = el("div", "cv-win-now");
-    const nowLabel = el("span", "cv-win-now-l");
-    this.nowElapsed = el("span", "cv-win-now-t");
-    this.cancel = el("a", "cv-link cv-win-cancel", "Cancel");
-    this.cancel.href = "#";
-    this.cancel.title = "Stop the running turn";
-    this.cancel.hidden = true;
-    this.cancel.addEventListener("click", (e) => {
-      e.preventDefault();
-      e.stopPropagation();
-      void this.run(() => this.api.control!.cancel(this.key));
-    });
-    this.now.append(nowLabel, this.nowElapsed, this.cancel);
     this.text = el("div", "cv-win-text");
-    this.att = el("div", "cv-win-att");
-    this.attText = el("span", "cv-win-att-x");
-    this.allow = el("a", "cv-link", "Allow");
-    this.allow.href = "#";
-    this.deny = el("a", "cv-link", "Deny");
-    this.deny.href = "#";
-    for (const [a, decision] of [
-      [this.allow, "allow"],
-      [this.deny, "deny"],
+    this.ask = el("div", "cv-win-ask");
+    this.askText = el("div", "cv-win-ask-x");
+    this.askActs = el("div", "cv-win-acts");
+    const allow = el("button", "btn btn--sm btn--primary cv-allow", "Allow");
+    const deny = el("button", "btn btn--sm cv-deny", "Deny");
+    for (const [b, d] of [
+      [allow, "allow"],
+      [deny, "deny"],
     ] as const) {
-      a.addEventListener("click", (e) => {
-        e.preventDefault();
+      b.type = "button";
+      b.addEventListener("click", (e) => {
         e.stopPropagation();
-        void this.answer(decision);
+        void this.answer(d);
       });
     }
-    const acts = el("span", "cv-win-att-a");
-    acts.append(this.allow, this.deny);
-    this.att.append(this.attText, acts);
+    this.askActs.append(deny, allow);
+    this.wait = el("div", "cv-win-wait", "Waiting in the terminal");
+    this.ask.append(this.askText, this.wait, this.askActs);
 
-    // Control: a prompt line when the host can sign and carry a command to this
-    // session; the host's reason in a muted line when it cannot.
+    // Expanded only: the prompt when the host can carry one, what was sent, the reason.
     this.ctl = el("div", "cv-win-ctl");
-    this.ctlRow = el("div", "cv-ctl-row");
-    this.input = el("input", "cv-ctl-input");
+    this.input = el("input", "field cv-ctl-input");
     this.input.type = "text";
-    this.input.placeholder = "Prompt… Enter sends";
+    this.input.placeholder = "Message · Enter sends";
     this.input.autocomplete = "off";
     this.input.setAttribute("aria-label", "Prompt for this session");
     this.input.addEventListener("keydown", (e) => {
+      e.stopPropagation();
       if (e.key === "Enter" && this.input.value.trim()) {
         e.preventDefault();
         const text = this.input.value.trim();
@@ -169,51 +164,35 @@ export class WinView {
         this.input.blur();
         this.el.focus({ preventScroll: true });
       }
-      e.stopPropagation();
     });
-    this.ctlRow.append(this.input);
     this.reason = el("div", "cv-ctl-reason");
     this.acts = el("div", "cv-ctl-acts");
-    this.ctl.append(this.ctlRow, this.reason, this.acts);
+    this.ctl.append(this.acts, this.input, this.reason);
     this.ctl.hidden = true;
-    this.body.append(this.now, this.text, this.att, this.ctl);
-
-    this.foot = el("div", "cv-win-foot");
-    this.footLeft = el("span");
-    this.footRight = el("span");
-    this.kids = el("button", "cv-win-kids");
-    this.kids.type = "button";
-    this.kids.hidden = true;
-    this.kids.title = "Finished subagents";
-    this.kids.addEventListener("click", (e) => {
-      e.stopPropagation();
-      this.hooks.onToggleDone();
-    });
-    this.foot.append(this.footLeft, this.kids, this.footRight);
+    this.body.append(this.text, this.ask);
 
     const resize = el("div", "cv-win-resize");
     resize.setAttribute("aria-hidden", "true");
-    this.el.append(this.bar, this.body, this.foot, resize);
-    this.update(session, Date.now(), [], 0, false);
+    this.el.append(bar, meta, this.body, this.ctl, resize);
+    this.update(session, ctx);
   }
 
-  update(
-    s: SessionSummary,
-    now: number,
-    activities: readonly ControlActivity[],
-    doneKids: number,
-    showingDone: boolean,
-  ) {
+  /** Whether it needs you and Allow / Deny can be answered from here: a taller window. */
+  get answerable(): boolean {
+    const att = this.session.openAttentions[0];
+    return this.session.state === "needs_you" && att?.kind === "permission" && this.canControl;
+  }
+
+  update(s: SessionSummary, ctx: WinContext) {
     this.session = s;
-    this.lastActs = activities;
-    this.lastDone = doneKids;
-    this.lastShowing = showingDone;
+    this.ctx = ctx;
     const att = s.openAttentions[0];
-    const prog = s.progress?.assistant ?? "";
     const control = this.api.control;
     const av = control && s.state !== "done" ? control.availability({ session: s.key }) : null;
     this.canControl = !!av?.ok;
-    const acts = activities.slice(0, this.expanded ? ACTS_EXPANDED : ACTS_SHOWN);
+    const expanded = !!this.detail;
+    const acts = expanded ? ctx.activities.slice(0, 3) : [];
+    const prog = s.progress?.assistant ?? "";
     const sig = [
       s.state,
       s.title,
@@ -224,142 +203,122 @@ export class WinView {
       s.currentTool?.since,
       s.currentTurn?.since,
       s.stateSince,
+      s.lastAt,
       s.endedAt,
       att?.attentionId,
       att?.message,
       prog.length,
-      s.progress?.at,
       s.lastAssistant,
       s.lastUser,
-      s.counts.tools,
       s.counts.toolErrors,
-      s.counts.filesChanged,
-      s.counts.turns,
-      s.counts.subagents,
-      s.model,
       av ? `${av.ok}:${av.reason ?? ""}` : "-",
       acts.map((a) => `${a.id}:${a.outcome ?? ""}:${a.reply?.length ?? ""}`).join(","),
-      doneKids,
-      showingDone,
+      ctx.view,
+      ctx.label?.color,
+      ctx.label?.name,
+      ctx.ownReason,
+      ctx.parentTitle,
+      expanded,
       this.busy,
       this.error,
     ].join("\u0001");
-    if (sig === this.sig) return;
+    if (sig === this.sig) {
+      this.tick(ctx.now);
+      return;
+    }
     this.sig = sig;
+    const title = this.api.format.title(s);
 
     this.el.dataset.state = s.state;
     setClass(this.el, "is-needs", s.state === "needs_you");
-    setClass(this.el, "is-muted", s.state === "stale" || s.state === "idle" || s.state === "done");
+    setClass(this.el, "is-ask", this.answerable);
     setClass(this.el, "is-done", s.state === "done");
-    setText(this.title, this.api.format.title(s));
-    this.title.title = this.api.format.title(s);
-    const rb = this.api.format.repoBranch(s);
-    setText(this.meta, [s.machine, rb].filter(Boolean).join(" · "));
-
-    // What's happening now.
-    const label = this.now.firstElementChild as HTMLElement;
-    this.since = undefined;
-    this.sincePrefix = "";
-    let nowText = "";
-    let nowCls = "";
-    if (s.state === "needs_you" && att) {
-      nowText = `${ATTENTION_LABEL[att.kind] ?? att.kind}${att.tool ? ` · ${att.tool}` : ""}`;
-      nowCls = "is-needs";
-      this.since = ms(att.at);
-      this.sincePrefix = "waiting ";
-    } else if (s.state === "working") {
-      if (s.currentTool) {
-        nowText = s.currentTool.tool;
-        nowCls = "is-tool";
-        this.since = ms(s.currentTool.since);
-      } else if (s.progress && now - ms(s.progress.at) < 4000) {
-        nowText = "writing";
-        nowCls = "is-writing";
-      } else {
-        nowText = "thinking";
-        nowCls = "is-writing";
-        this.since = s.currentTurn ? ms(s.currentTurn.since) : undefined;
-      }
-    } else if (s.state === "stale") {
-      nowText = "silent";
-      this.since = ms(s.lastAt);
-      this.sincePrefix = "for ";
-    } else if (s.state === "idle") {
-      nowText = "idle";
-      this.since = ms(s.stateSince);
-      this.sincePrefix = "for ";
-    } else {
-      const ran = ms(s.endedAt ?? s.lastAt) - ms(s.startedAt);
-      nowText = `done · ${s.counts.tools} tool${s.counts.tools === 1 ? "" : "s"}${ran > 0 ? ` · ${durShort(ran)}` : ""}`;
-      this.since = undefined;
+    this.glyph.className = `dot dot--${s.state} cv-win-glyph`;
+    setText(this.title, title);
+    if (ctx.label) {
+      this.dot.className = `label-dot label-dot--${ctx.label.color} cv-win-label`;
+      this.dot.title = `Label: ${ctx.label.name}`;
+      this.dot.hidden = false;
+    } else this.dot.hidden = true;
+    // The harness mark, except where the grouping already says the harness.
+    const markFor = ctx.view === "harness" ? "" : s.harness;
+    if (markFor !== this.markFor) {
+      this.markFor = markFor;
+      const icon = markFor ? this.api.format.harnessIcon?.(markFor) : null;
+      if (icon) this.mark.innerHTML = icon.svg;
+      else setText(this.mark, markFor ? this.api.format.monogram(markFor) : "");
+      this.mark.hidden = !markFor;
     }
-    setText(label, nowText);
-    this.now.className = `cv-win-now ${nowCls}`;
-    this.cancel.hidden = !(this.canControl && s.state === "working" && !s.parentId);
-    this.tick(now);
+    const stateWord = STATE_WORDS[s.state] ?? s.state;
+    this.el.setAttribute(
+      "aria-label",
+      `${title}, ${stateWord}${ctx.label ? `, label ${ctx.label.name}` : ""}${s.agents?.length ? `, ${agentWords(s)}` : ""}`,
+    );
 
-    // The live text: the tail of what is being written, else the last exchange.
+    // Line 2: only what the grouping doesn't already say; errors when there are any.
+    const facts = ctx.parentTitle
+      ? [`Subagent of ${ctx.parentTitle}`]
+      : ctx.view === "machine"
+        ? [this.api.format.repoBranch(s)].filter(Boolean)
+        : metaFacts(s, ctx.view);
+    const errs = s.counts.toolErrors;
+    if (errs > 0 && facts.length >= 2) facts.length = 1;
+    setText(this.metaText, facts.join(" · "));
+    setText(this.metaErr, errs > 0 ? `${facts.length ? " · " : ""}${errs} error${errs === 1 ? "" : "s"}` : "");
+    this.since = sinceOf(s);
+    this.tick(ctx.now);
+
+    // The body by state.
     let text = "";
     let textCls = "cv-win-text";
-    if (s.state === "working" && prog) {
-      text = tail(prog, 260);
-      textCls += " is-live";
-    } else if (s.lastAssistant) {
-      text = oneLine(s.lastAssistant, 260);
-    } else if (s.progress?.user || s.lastUser) {
-      text = oneLine(s.progress?.user ?? s.lastUser, 260);
-      textCls += " is-user";
-    }
-    setText(this.text, text);
-    this.text.className = textCls;
-    this.text.hidden = !text;
-
-    // Attention. Allow/Deny act here when the host can carry the answer; otherwise they
-    // lead to the session page, where control lives.
-    if (att) {
-      setText(this.attText, oneLine(att.message ?? ATTENTION_LABEL[att.kind] ?? att.kind, 160));
-      this.att.hidden = false;
-      const ask = att.kind === "permission";
-      setClass(this.att, "is-ask", ask);
-      setClass(this.att, "is-local", ask && this.canControl);
-      const title = ask && this.canControl ? "Answer from here" : "Answer on the session page";
-      this.allow.title = title;
-      this.deny.title = title;
+    if (s.state === "needs_you" && att) {
+      this.ask.hidden = false;
+      this.askText.replaceChildren();
+      const message = att.message?.trim() ?? "";
+      if (att.kind === "permission" && att.tool) {
+        this.askText.append(document.createTextNode(`${att.tool}: `), el("code", "cv-code", oneLine(message, 220)));
+      } else {
+        this.askText.append(document.createTextNode(oneLine(message || ASK_WORDS[att.kind] || att.kind, 220)));
+      }
+      this.askActs.hidden = !this.answerable;
+      this.wait.hidden = this.answerable;
+      this.text.hidden = true;
     } else {
-      this.att.hidden = true;
+      this.ask.hidden = true;
+      if (s.state === "working" && prog) {
+        text = tail(prog, 260);
+        textCls += " is-live";
+      } else if (s.state === "working") {
+        const tool = s.currentTool;
+        text = tool ? `${tool.tool} · ${durShort(Math.max(0, ctx.now - ms(tool.since)))}` : "Thinking";
+        textCls += " is-quiet";
+      } else if (s.lastAssistant) {
+        text = oneLine(s.lastAssistant, 280);
+      } else if (s.progress?.user || s.lastUser) {
+        text = oneLine(s.progress?.user ?? s.lastUser, 280);
+        textCls += " is-user";
+      }
+      setText(this.text, text);
+      this.text.className = textCls;
+      this.text.hidden = !text;
     }
 
-    // Control.
-    if (control && !s.parentId && s.state !== "done") {
+    // Control lives in the expanded window.
+    if (expanded && control && s.state !== "done") {
       this.ctl.hidden = false;
-      this.ctlRow.hidden = !this.canControl;
+      this.input.hidden = !this.canControl;
       this.input.disabled = this.busy;
-      const reason = this.error || (av && !av.ok ? av.reason || "control is not available" : "");
+      const reason = this.error || (av && !av.ok ? (ctx.ownReason ?? "") : "");
       setText(this.reason, reason);
       this.reason.hidden = !reason;
       setClass(this.reason, "is-err", !!this.error);
-      this.renderActs(acts, s, now);
+      this.renderActs(acts, s);
     } else {
       this.ctl.hidden = true;
     }
-
-    // Counts.
-    const c = s.counts;
-    const bits = [`${c.tools} tool${c.tools === 1 ? "" : "s"}`];
-    if (c.toolErrors) bits.push(`${c.toolErrors} err`);
-    if (c.filesChanged) bits.push(`${c.filesChanged} file${c.filesChanged === 1 ? "" : "s"}`);
-    if (c.turns) bits.push(`${c.turns} turn${c.turns === 1 ? "" : "s"}`);
-    const liveKids = c.subagents - doneKids;
-    if (liveKids > 0) bits.push(`${liveKids} sub`);
-    setText(this.footLeft, bits.join(" · "));
-    this.kids.hidden = doneKids === 0;
-    setText(this.kids, `${doneKids} done`);
-    setClass(this.kids, "is-on", showingDone);
-    this.kids.setAttribute("aria-expanded", String(showingDone));
-    setText(this.footRight, [this.api.format.monogram(s.harness), modelShort(s.model)].filter(Boolean).join(" · "));
   }
 
-  private renderActs(acts: readonly ControlActivity[], s: SessionSummary, now: number) {
+  private renderActs(acts: readonly ControlActivity[], s: SessionSummary) {
     const machine = s.machine ?? "the machine";
     this.acts.replaceChildren(
       ...acts.map((a) => {
@@ -371,9 +330,8 @@ export class WinView {
         head.append(
           el("span", "cv-act-kind", KIND_LABEL[a.kind] ?? a.kind),
           el("span", "cv-act-text", a.text ? oneLine(a.text, 80) : ""),
-          el("span", "cv-act-ago", this.api.format.ago(a.ackedAt ?? a.takenAt ?? a.at, now)),
         );
-        row.append(head, el("div", `cv-act-state${isFinal(a) ? "" : " is-live"}`, outcomeWords(a, machine)));
+        row.append(head, el("div", "cv-act-state", outcomeWords(a, machine)));
         if (a.reply) row.append(el("div", "cv-act-reply", tail(a.reply, 200)));
         return row;
       }),
@@ -381,59 +339,53 @@ export class WinView {
     this.acts.hidden = acts.length === 0;
   }
 
-  /** The most recently touched session on the canvas. */
-  setLatest(on: boolean) {
-    if (this.latest.hidden === !on) return;
-    this.latest.hidden = !on;
-    setClass(this.el, "is-latest", on);
-  }
-
-  /** Borders and title fade with age on a log scale; the attribute changes only when
-   *  the bucket does, so a tick costs nothing when nothing moved. */
-  setAge(bucket: number) {
-    if (bucket === this.ageBucket) return;
-    this.ageBucket = bucket;
-    this.el.dataset.age = String(bucket);
-  }
-
-  /** Once a second: the elapsed numeral beside the current tool or wait. */
+  /** Once a second: the time on the right. */
   tick(now: number) {
-    if (this.since === undefined || Number.isNaN(this.since)) {
-      setText(this.nowElapsed, "");
-      return;
+    const t = this.since;
+    setText(this.time, t === undefined || Number.isNaN(t) ? "" : short(Math.max(0, now - t)));
+    // "Bash · 12 s" while a tool runs and nothing is being written.
+    const s = this.session;
+    if (s.state === "working" && !s.progress?.assistant && s.currentTool && this.text.classList.contains("is-quiet")) {
+      setText(this.text, `${s.currentTool.tool} · ${durShort(Math.max(0, now - ms(s.currentTool.since)))}`);
     }
-    const d = Math.max(0, now - this.since);
-    setText(this.nowElapsed, d < 1500 ? "" : `${this.sincePrefix}${durShort(d)}`);
+  }
+
+  /** Model and counts, for the tooltip. */
+  tipLines(): string[] {
+    const s = this.session;
+    const c = s.counts;
+    const n = (v: number, w: string) => `${v} ${w}${v === 1 ? "" : "s"}`;
+    const harness = this.api.format.harnessIcon?.(s.harness)?.name ?? s.harness;
+    return [
+      this.api.format.title(s),
+      [harness, s.model].filter(Boolean).join(" · "),
+      [s.machine, s.cwd].filter(Boolean).join(" · "),
+      [n(c.tools, "tool"), n(c.toolErrors, "error"), n(c.filesChanged, "file")].join(" · "),
+    ].filter(Boolean);
   }
 
   private async run(fn: () => Promise<unknown>) {
     if (this.busy) return;
     this.busy = true;
     this.error = "";
-    this.sig = "";
     this.refresh();
     try {
       await fn();
     } catch (e) {
       const m = e instanceof Error ? e.message : String(e);
-      this.error = m.startsWith("not sent") ? m : `not sent · ${m}`;
+      this.error = m.startsWith("not sent") ? m : `Not sent · ${m}`;
     } finally {
       this.busy = false;
-      this.sig = "";
       this.refresh();
     }
   }
 
-  /** Re-render from the last session with the control state changed (the canvas
-   *  re-updates with fresh activities on the next snapshot anyway). */
   private refresh() {
-    this.update(this.session, Date.now(), this.lastActs, this.lastDone, this.lastShowing);
+    this.sig = "";
+    this.update(this.session, { ...this.ctx, now: Date.now() });
   }
-  private lastActs: readonly ControlActivity[] = [];
-  private lastDone = 0;
-  private lastShowing = false;
 
-  /** Allow or deny the open permission: from here when the host carries it, else on the page. */
+  /** Allow or deny the open permission: from here when the host carries it, else beside. */
   answer(decision: "allow" | "deny"): Promise<void> | void {
     const att = this.session.openAttentions[0];
     if (!att) return;
@@ -443,9 +395,9 @@ export class WinView {
     this.hooks.onOpen();
   }
 
-  /** Enter on a focused window: the prompt line, when there is one. */
+  /** The prompt line of the expanded window, when there is one. */
   focusPrompt(): boolean {
-    if (this.ctl.hidden || this.ctlRow.hidden || this.input.disabled) return false;
+    if (this.ctl.hidden || this.input.hidden || this.input.disabled) return false;
     this.input.focus();
     return true;
   }
@@ -459,6 +411,7 @@ export class WinView {
       this.detail.destroy();
       this.detail = undefined;
     }
+    this.refresh();
   }
 
   get expanded() {
@@ -471,17 +424,64 @@ export class WinView {
   }
 }
 
+function iconBtn(cls: string, svg: string, label: string): HTMLButtonElement {
+  const b = el("button", `icon-btn cv-icon ${cls}`);
+  b.type = "button";
+  b.innerHTML = svg;
+  b.title = label;
+  b.setAttribute("aria-label", label);
+  return b;
+}
+
+const STATE_WORDS: Record<string, string> = {
+  needs_you: "needs you",
+  working: "working",
+  stale: "stale",
+  idle: "idle",
+  done: "done",
+};
+
+const ASK_WORDS: Record<string, string> = {
+  permission: "Permission",
+  question: "A question",
+  elicitation: "Input wanted",
+  idle: "Waiting for a prompt",
+  error: "An error",
+};
+
+function agentWords(s: SessionSummary): string {
+  const running = s.counts.agentsRunning ?? 0;
+  const n = s.agents.length;
+  return running ? `${running} subagent${running === 1 ? "" : "s"} running` : `${n} subagent${n === 1 ? "" : "s"}`;
+}
+
+/** Line 2's facts for a view: what its grouping doesn't already say. */
+function metaFacts(s: SessionSummary, view: ViewId): string[] {
+  if (view === "repo") return [s.machine, s.branch].filter((x): x is string => !!x);
+  return [s.machine, s.repo ? repoParts(s.repo).short : ""].filter((x): x is string => !!x);
+}
+
+/** Needs you: since the attention; working: since its state began; idle: since its last event. */
+function sinceOf(s: SessionSummary): number | undefined {
+  const att = s.openAttentions[0];
+  if (s.state === "needs_you" && att) return ms(att.at);
+  if (s.state === "working") return ms(s.stateSince);
+  if (s.state === "done") return ms(s.endedAt ?? s.lastAt);
+  return ms(s.lastAt);
+}
+
+/** "now", "12 s", "3 min", "2 h", "3 d". */
+export function short(d: number): string {
+  if (d < 5000) return "now";
+  if (d < 60_000) return `${Math.floor(d / 1000)} s`;
+  if (d < 3600_000) return `${Math.floor(d / 60_000)} min`;
+  if (d < 86_400_000) return `${Math.floor(d / 3600_000)} h`;
+  return `${Math.floor(d / 86_400_000)} d`;
+}
+
 function tail(s: string, max: number): string {
   const t = s.replace(/\s+/g, " ").trim();
   return t.length > max ? `…${t.slice(t.length - max + 1)}` : t;
-}
-
-/** "claude-fable-5-1" → "fable 5.1", "gpt-5-codex" → "gpt-5 codex". */
-function modelShort(model: string | undefined): string {
-  if (!model) return "";
-  let m = model.replace(/^claude-/, "").replace(/-\d{8}$/, "");
-  m = m.replace(/(\d)-(\d)/g, "$1.$2");
-  return m.replace(/-/g, " ");
 }
 
 /** The step a carried message is at, the way the Session page reads it. */
@@ -490,32 +490,24 @@ function shownState(a: ControlActivity): string {
   return a.outcome ?? "queued";
 }
 
-const isFinal = (a: ControlActivity) =>
-  a.outcome === "delivered" ||
-  a.outcome === "expired" ||
-  a.outcome === "unsupported" ||
-  a.outcome === "failed" ||
-  a.outcome === "refused";
-
 function outcomeWords(a: ControlActivity, machine: string): string {
-  const mode = a.mode ? ` · ${a.mode}` : "";
   switch (shownState(a)) {
     case "queued":
-      return `queued · waiting for ${machine} to take it`;
+      return `Queued · waiting for ${machine}`;
     case "taken":
-      return `taken · ${machine} is delivering it${mode}`;
+      return `Taken · ${machine} is delivering it`;
     case "progress":
-      return `working · ${machine} is answering${mode}`;
+      return `Working · ${machine} is answering`;
     case "delivered":
-      return `delivered${mode}`;
+      return "Delivered";
     case "expired":
-      return `expired · ${a.detail ?? "nobody took it in time"}`;
+      return `Expired · ${a.detail ?? "nobody took it in time"}`;
     case "unsupported":
-      return `unsupported · ${machine} has no way to ${KIND_LABEL[a.kind] ?? a.kind} on this harness`;
+      return `Unsupported on this harness`;
     case "failed":
-      return `failed · ${a.detail ?? "the path errored"}`;
+      return `Failed · ${a.detail ?? "the path errored"}`;
     case "refused":
-      return `refused · ${a.code ? a.code.replace(/_/g, " ") : (a.detail ?? "")}`;
+      return `Refused · ${a.code ? a.code.replace(/_/g, " ") : (a.detail ?? "")}`;
     default:
       return String(a.outcome);
   }

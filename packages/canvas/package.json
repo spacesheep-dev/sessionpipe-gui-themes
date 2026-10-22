@@ -32,7 +32,7 @@
     "dev": "node scripts/dev.mjs",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "playwright test",
-    "prepublishOnly": "node scripts/build.mjs --minify"
+    "prepublishOnly": "node scripts/build.mjs"
   },
   "devDependencies": {
     "@sessionpipe-gui/theme-types": "0.1.0"

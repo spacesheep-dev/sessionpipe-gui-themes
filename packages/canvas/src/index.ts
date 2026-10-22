@@ -1,95 +1,188 @@
 // SPDX-License-Identifier: Apache-2.0
-// Canvas: every live session as a window on an infinite, pannable, zoomable surface.
-// Positions live in api.storage (shared across devices); the viewport in api.local.
-// Rendering is transforms only, applied in one requestAnimationFrame that runs only
-// when something changed.
-import type { Theme, ThemeApi, ThemeSnapshot } from "@sessionpipe-gui/theme-types";
-import type { ControlActivity, SessionKey, SessionSummary } from "@sessionpipe-gui/theme-types/api";
-import "./canvas.css";
-import { attachInput, type Hit, type InputHost } from "./input";
-import { bounds, findFree, overlaps, type Rect, tidy } from "./layout";
-import { type MapHost, MapLayer } from "./map";
+// Canvas: every live session as a window on an infinite, pannable, zoomable surface, in
+// views. The presets (State, Machine, Harness, Repo, Label) are computed: a clean grid in
+// labelled groups, the same on every device, never stored. My layout is the person's own
+// arrangement with areas and notes, kept in api.storage as operations so devices merge.
+// Map is the infrastructure. Subagents hang off their orchestrator as pills. Rendering is
+// transforms only, applied in one requestAnimationFrame that runs only when asked.
+import type { Theme, ThemeApi, ThemeSnapshot, ViewMenuItem, ViewShortcut } from "@sessionpipe-gui/theme-types";
 import {
+  type AgentRun,
+  type ControlActivity,
+  LABEL_COLORS,
+  type LabelColor,
+  type SessionKey,
+  type SessionState,
+  type SessionSummary,
+} from "@sessionpipe-gui/theme-types/api";
+import { type PillStack, PillView, pillId, pillStack, stackHeight } from "./agents";
+import { AreaView, NoteView } from "./areas";
+import "./canvas.css";
+import { Chrome, type ChromeHost } from "./chrome";
+import {
+  areaOf,
+  exec,
+  isEmpty,
+  isPositional,
+  migrate,
+  newId,
+  normalize,
+  type Op,
+  pruneOp,
+  v1HasPositions,
+} from "./doc";
+import { attachInput, type Hit, type InputHost, type MenuSource } from "./input";
+import { bounds, type Cell, colsFor, findFree, type Group, gridCells, gridLayout, overlaps } from "./layout";
+import { harnessName, type MapHost, MapLayer, repoParts } from "./map";
+import {
+  AREA_HEAD,
+  AREA_MIN_H,
+  AREA_MIN_W,
+  AREA_PAD,
+  BAR_H,
+  BAR_H_PHONE,
+  COL_GAP,
+  type Doc,
   EXP_H,
+  EXP_MAX_H,
+  EXP_MAX_W,
   EXP_W,
-  emptyLayout,
+  emptyDoc,
   GRID,
-  type Layout,
-  MAX_H,
-  MAX_W,
-  MIN_H,
-  MIN_W,
-  SUB_H,
-  SUB_W,
-  TREE_GAP,
-  TREE_ROW,
+  GROUP_GAP,
+  HEAD_H,
+  isPreset,
+  MINIMAP_W,
+  NARROW_W,
+  NOTE_H,
+  NOTE_MAX,
+  NOTE_MIN_H,
+  NOTE_MIN_W,
+  NOTE_W,
+  PHONE_W,
+  PILL_GAP,
+  PILL_H,
+  PILL_INDENT,
+  PILL_MORE_H,
+  PILL_OFF,
+  PILL_W,
+  type Rect,
+  STATUS_H,
+  TRUNK_OFF,
+  VIEWS,
+  type ViewId,
   type Viewport,
   WIN_H,
+  WIN_H_ASK,
   WIN_W,
-  type WinPos,
+  type WinEntry,
   ZOOM_MAX,
   ZOOM_MIN,
-  type Zone,
 } from "./types";
 import { clamp, debounce, el, isTouchLike, reducedMotion, setClass, setText, svg } from "./util";
 import { WinView } from "./window";
 
-const VIEWPORT_KEY = "viewport";
-const MAP_LOCAL_KEY = "map";
-const COLOUR_LOCAL_KEY = "colour";
-const LEGEND_SEEN_KEY = "legendSeen";
-const LINES_LOCAL_KEY = "lines";
-type LinesMode = "all" | "hovered" | "none";
-const LINES_MODES: LinesMode[] = ["hovered", "all", "none"];
-/** Age buckets for the fade: under 2 min, 15 min, 1 h, 6 h, older. */
-const AGE_STEPS_MS = [2 * 60_000, 15 * 60_000, 3600_000, 6 * 3600_000];
-const SHELF_MAX = 48;
-const Z_NEEDS = 100_000;
+const LOCAL_VIEW = "view";
+const LOCAL_MINIMAP = "minimap";
+const LOCAL_DONE = "showDoneSessions";
+const vpKey = (v: ViewId) => `viewport.${v}`;
+const UNDO_MAX = 50;
+const DONE_MAX = 48;
+const TWEEN_MS = 320;
+const STATE_ORDER: SessionState[] = ["needs_you", "working", "stale", "idle", "done"];
+const STATE_TITLE: Record<string, string> = {
+  needs_you: "Needs you",
+  working: "Working",
+  stale: "Stale",
+  idle: "Idle",
+  done: "Done",
+};
 
-class Canvas implements InputHost {
+interface Head {
+  id: string;
+  title: string;
+  count: number;
+  box: Rect;
+  label?: LabelColor;
+  icon?: string;
+  keys: SessionKey[];
+}
+
+/** What a drag is carrying: start positions (world), live offsets applied at render. */
+interface Moving {
+  items: { item: string; x: number; y: number }[];
+  dx: number;
+  dy: number;
+}
+
+class Canvas implements InputHost, ChromeHost {
   readonly root: HTMLElement;
   private world: HTMLElement;
-  private zonesEl: HTMLElement;
+  private areasEl: HTMLElement;
+  private headsEl: HTMLElement;
   private tethers: SVGSVGElement;
-  private winsEl: HTMLElement;
-  private search: HTMLInputElement;
-  private zoomLabel: HTMLButtonElement;
-  private conn: HTMLElement;
-  private zonesBtn: HTMLButtonElement;
-  private mapBtn: HTMLButtonElement;
-  private colourBtn: HTMLButtonElement;
-  private linesBtn: HTMLButtonElement;
-  private legend: HTMLElement;
   private treeG: SVGGElement;
-  private map: MapLayer;
-  /** Sessions a start named, waiting to appear by their machine's node. */
-  private pendingStart = new Map<SessionKey, string>();
-  private tray: HTMLElement;
-  private shelf: HTMLElement;
-  private shelfBtn: HTMLButtonElement;
-  private shelfTiles: HTMLElement;
+  private winsEl: HTMLElement;
+  private notesEl: HTMLElement;
+  private marqueeEl: HTMLElement;
+  private tip: HTMLElement;
   private minimap: HTMLCanvasElement;
-  private status: HTMLElement;
+  private map: MapLayer;
+  private chrome: Chrome;
 
-  private layout: Layout = emptyLayout();
+  private doc: Doc = emptyDoc();
+  private viewId: ViewId = "state";
   private view: Viewport = { x: 0, y: 0, k: 1 };
   private size = { w: 0, h: 0 };
-  private views = new Map<SessionKey, WinView>();
-  private zoneEls = new Map<string, HTMLElement>();
   private snapshot: ThemeSnapshot;
-  private zTop = 1;
+  private wins = new Map<SessionKey, WinView>();
+  private pills = new Map<string, PillView>();
+  private mores = new Map<SessionKey, HTMLButtonElement>();
+  private areaViews = new Map<string, AreaView>();
+  private noteViews = new Map<string, NoteView>();
+  private headEls = new Map<string, HTMLElement>();
+  /** Window positions for the current view (world). */
+  private rects = new Map<SessionKey, Rect>();
+  /** Pill stacks of the windows that have agents. */
+  private stacks = new Map<SessionKey, PillStack>();
+  /** Child sessions shown as a pill, by key → their parent's key. */
+  private asPill = new Map<SessionKey, SessionKey>();
+  private heads: Head[] = [];
+  /** Phone positions of areas and notes (computed, never stored). */
+  private phoneBoxes = new Map<string, Rect>();
+  private selection = new Set<string>();
+  private hoverPill: string | null = null;
   private query = "";
-  private dirtyVp = true;
-  private dirtyWins = new Set<SessionKey>();
-  private dirtyAll = true;
   private frame = 0;
   private tween: { from: Viewport; to: Viewport; t0: number; ms: number } | undefined;
-  private leaving = new Set<SessionKey>();
   private unsubs: (() => void)[] = [];
   private ticker: ReturnType<typeof setInterval> | undefined;
   private ro: ResizeObserver | undefined;
   private ready = false;
   private motion = !reducedMotion();
+  private layoutSig = "";
+  private tidying: ReturnType<typeof setTimeout> | undefined;
+  /** A gesture is under way: another device's document waits for its end. */
+  private gesture = false;
+  private pendingRemote: { v: unknown } | undefined;
+  private writes = 0;
+  private queue: Promise<unknown> = Promise.resolve();
+  private undoStack: Op[] = [];
+  private redoStack: Op[] = [];
+  private moving: Moving | undefined;
+  private resizing: { item: string; w: number; h: number; dw: number; dh: number } | undefined;
+  private dropArea: string | undefined;
+  /** Expanded windows outside My layout (this page only). */
+  private expandedHere = new Set<SessionKey>();
+  /** Keys this page saw while live: one that disappears was forgotten. */
+  private seen = new Set<SessionKey>();
+  private pointer = { x: 0, y: 0 };
+  private saidPreset = false;
+  private tipTimer: ReturnType<typeof setTimeout> | undefined;
+  private editing = 0;
+  /** Sessions a start named, waiting to appear by their machine's node. */
+  private pendingStart = new Map<SessionKey, string>();
+  private minimapMap: { s: number; ox: number; oy: number } | undefined;
 
   constructor(
     container: HTMLElement,
@@ -102,96 +195,48 @@ class Canvas implements InputHost {
     if (isTouchLike()) this.root.classList.add("is-touch");
 
     this.world = el("div", "cv-world");
-    this.zonesEl = el("div", "cv-zones");
+    this.areasEl = el("div", "cv-areas");
+    this.headsEl = el("div", "cv-heads");
     this.tethers = svg("svg", { class: "cv-tethers", "aria-hidden": "true" });
     this.treeG = svg("g", { class: "cv-tree" });
     this.tethers.append(this.treeG);
     this.winsEl = el("div", "cv-wins");
+    this.notesEl = el("div", "cv-notes");
+    this.marqueeEl = el("div", "cv-marquee");
+    this.marqueeEl.hidden = true;
     this.map = new MapLayer(this.mapHost());
-    this.world.append(this.zonesEl, this.map.lanesEl, this.tethers, this.map.nodesEl, this.winsEl, this.map.customEl);
-
-    // HUD: search, actions, zoom.
-    const hud = el("div", "cv-hud");
-    const left = el("div", "cv-hud-l");
-    this.search = el("input", "cv-search");
-    this.search.type = "search";
-    this.search.placeholder = "Find  /";
-    this.search.setAttribute("aria-label", "Find sessions");
-    this.search.autocomplete = "off";
-    this.search.addEventListener("input", () => this.setQuery(this.search.value));
-    left.append(this.search);
-    const btn = (label: string, title: string, fn: () => void) => {
-      const b = el("button", "cv-btn", label);
-      b.type = "button";
-      b.title = title;
-      b.addEventListener("click", fn);
-      left.append(b);
-      return b;
-    };
-    btn("Tidy", "Arrange by state", () => this.tidy());
-    btn("Fit", "Zoom to show everything (0)", () => this.fit());
-    this.zonesBtn = btn("Zones", "Show machines as regions", () => this.toggleZones());
-    this.mapBtn = btn("Map", "Devices, agents, machines and repos around the sessions", () => this.toggleMap());
-    this.linesBtn = btn("Lines", "Which lines the map draws: hovered · all · none", () => this.cycleLines());
-    this.linesBtn.classList.add("cv-lines");
-    this.colourBtn = btn("Colour", "Colour windows by state (? explains)", () => this.toggleColour());
-    const add = btn("+", "Add a node of your own", () => this.addCustomNode());
-    add.classList.add("cv-btn-add");
-    add.setAttribute("aria-label", "Add a node");
-    btn("Reset", "Forget the layout", () => this.reset());
-    const right = el("div", "cv-hud-r");
-    this.conn = el("span", "cv-conn");
-    this.zoomLabel = el("button", "cv-zoom", "100%");
-    this.zoomLabel.type = "button";
-    this.zoomLabel.title = "Zoom to 100%";
-    this.zoomLabel.addEventListener("click", () => this.zoomTo(1));
-    right.append(this.conn, this.zoomLabel);
-    hud.append(left, right);
-
-    this.status = el("div", "cv-status");
-    this.status.setAttribute("aria-live", "polite");
-
-    // What the colours mean: shown once when colour first turns on, and on `?`.
-    this.legend = el("div", "cv-legend");
-    this.legend.hidden = true;
-    const swatch = (cls: string, text: string) => {
-      const item = el("span", "cv-legend-i");
-      item.append(el("span", `cv-legend-s ${cls}`), document.createTextNode(text));
-      return item;
-    };
-    const closeLegend = el("button", "cv-legend-x", "×");
-    closeLegend.type = "button";
-    closeLegend.setAttribute("aria-label", "Hide the legend");
-    closeLegend.addEventListener("click", () => this.showLegend(false));
-    this.legend.append(
-      swatch("is-working", "working"),
-      swatch("is-needs", "needs you"),
-      swatch("is-stale", "stale"),
-      swatch("is-idle", "idle · done"),
-      el("span", "cv-legend-t", "borders fade with age · the latest is marked"),
-      closeLegend,
+    this.world.append(
+      this.areasEl,
+      this.headsEl,
+      this.map.lanesEl,
+      this.tethers,
+      this.map.nodesEl,
+      this.winsEl,
+      this.notesEl,
+      this.map.customEl,
+      this.marqueeEl,
     );
-
-    this.tray = el("div", "cv-tray");
-    this.shelf = el("div", "cv-shelf");
-    this.shelfBtn = el("button", "cv-shelf-btn");
-    this.shelfBtn.type = "button";
-    this.shelfBtn.addEventListener("click", () => {
-      this.layout.shelfOpen = !this.layout.shelfOpen;
-      this.renderShelf();
-      this.save();
-    });
-    this.shelfTiles = el("div", "cv-shelf-tiles");
-    this.shelf.append(this.shelfBtn, this.shelfTiles);
-
+    this.chrome = new Chrome(this);
     this.minimap = el("canvas", "cv-minimap");
-    this.minimap.title = "Click to jump";
+    this.minimap.setAttribute("aria-hidden", "true");
     this.minimap.addEventListener("pointerdown", (e) => {
       e.stopPropagation();
       this.jumpFromMinimap(e);
+      const move = (ev: PointerEvent) => this.jumpFromMinimap(ev, false);
+      const up = () => {
+        this.minimap.removeEventListener("pointermove", move);
+        this.minimap.removeEventListener("pointerup", up);
+      };
+      this.minimap.setPointerCapture(e.pointerId);
+      this.minimap.addEventListener("pointermove", move);
+      this.minimap.addEventListener("pointerup", up);
     });
-
-    this.root.append(this.world, hud, this.legend, this.status, this.tray, this.shelf, this.minimap);
+    this.tip = el("div", "cv-tip");
+    this.tip.hidden = true;
+    this.tip.setAttribute("role", "tooltip");
+    this.root.append(this.world, this.chrome.bar, this.chrome.statusBar, this.minimap, this.tip);
+    this.root.addEventListener("pointerover", (e) => this.tipOver(e));
+    this.root.addEventListener("pointerdown", () => this.hideTip());
     container.append(this.root);
     if (this.root.clientHeight < 160) {
       const top = this.root.getBoundingClientRect().top;
@@ -199,14 +244,18 @@ class Canvas implements InputHost {
     }
     this.measure();
     this.ro = new ResizeObserver(() => {
+      const before = this.size;
       this.measure();
-      this.dirtyVp = true;
+      if (!this.ready) return;
+      const phoneChanged = before.w < PHONE_W !== this.size.w < PHONE_W;
+      if (phoneChanged || (isPreset(this.viewId) && Math.abs(before.w - this.size.w) > 40)) this.relayoutSoon();
       this.request();
     });
     this.ro.observe(this.root);
 
     this.unsubs.push(attachInput(this));
     this.unsubs.push(api.state.subscribe((s) => this.onSnapshot(s)));
+    if (api.storage.subscribe) this.unsubs.push(api.storage.subscribe((v) => this.onRemote(v)));
     this.ticker = setInterval(() => this.tick(), 1000);
     void this.load();
   }
@@ -214,25 +263,25 @@ class Canvas implements InputHost {
   // ---------- lifecycle ----------
 
   private async load() {
-    let stored: Layout | null = null;
+    let raw: unknown = null;
     try {
-      stored = await this.api.storage.get<Layout>();
-      if (stored && stored.v === 1 && stored.windows) this.layout = { ...emptyLayout(), ...stored };
+      raw = await this.api.storage.get();
     } catch {}
-    const vp = this.api.local.get<Viewport>(VIEWPORT_KEY);
-    if (vp && Number.isFinite(vp.x) && Number.isFinite(vp.y) && Number.isFinite(vp.k)) {
-      this.view = { x: vp.x, y: vp.y, k: clamp(vp.k, ZOOM_MIN, ZOOM_MAX) };
+    this.doc = normalize(raw);
+    const stored = this.api.local.get<ViewId>(LOCAL_VIEW);
+    this.viewId = stored && VIEWS.some((v) => v.id === stored) ? stored : v1HasPositions(raw) ? "layout" : "state";
+    // A layout from an earlier build: migrated once, by the first desktop that opens.
+    if ((raw as { v?: number } | null)?.v === 1 && !this.phone) {
+      void this.writeRaw((cur) => ((cur as { v?: number } | null)?.v === 1 ? migrate(cur as never) : normalize(cur)));
     }
     this.ready = true;
-    setClass(this.zonesBtn, "is-on", this.layout.zonesOn);
-    this.applyColour();
-    this.applyLines();
-    const fresh = !stored || Object.keys(this.layout.windows).length === 0;
-    this.sync(this.api.state.get(), true);
-    if (fresh && this.narrow) this.tidy(false);
-    this.applyMapOn();
-    if (!vp) this.fit(false);
-    this.dirtyVp = true;
+    this.chrome.setView(this.viewId);
+    this.applyView(false);
+    this.sync(this.snapshot);
+    const vp = this.api.local.get<Viewport>(vpKey(this.viewId));
+    if (vp && Number.isFinite(vp.x) && Number.isFinite(vp.y) && Number.isFinite(vp.k) && !this.phone) {
+      this.view = { x: vp.x, y: vp.y, k: clamp(vp.k, ZOOM_MIN, ZOOM_MAX) };
+    } else this.fit(false);
     this.request();
   }
 
@@ -241,55 +290,192 @@ class Canvas implements InputHost {
     if (this.ticker) clearInterval(this.ticker);
     this.ro?.disconnect();
     if (this.frame) cancelAnimationFrame(this.frame);
-    this.save.flush();
     this.saveVp.flush();
-    for (const v of this.views.values()) v.destroy();
+    this.placeLater.flush();
+    for (const v of this.wins.values()) v.destroy();
     this.map.destroy();
+    this.chrome.destroy();
     this.root.remove();
   }
 
   private measure() {
     this.size = { w: this.root.clientWidth, h: this.root.clientHeight };
-    setClass(this.root, "is-narrow", this.size.w < 600);
+    setClass(this.root, "is-phone", this.phone);
+    setClass(this.root, "is-narrow", this.size.w < NARROW_W);
+    setClass(this.root, "is-small", this.size.w < MINIMAP_W);
   }
 
-  /** A phone: windows stack in one column and Fit fits the width. */
-  private get narrow() {
-    return this.size.w < 600;
+  /** A phone: one column, nothing stored. */
+  private get phone() {
+    return this.size.w < PHONE_W;
   }
 
-  private save = debounce(400, () => {
-    void this.api.storage.set(this.layout).catch(() => {});
+  canArrange() {
+    return this.viewId === "layout" && !this.phone;
+  }
+
+  private get barH() {
+    return this.phone ? BAR_H_PHONE : BAR_H;
+  }
+
+  private saveVp = debounce(300, () => {
+    if (this.ready) this.api.local.set(vpKey(this.viewId), this.view);
   });
-  private saveVp = debounce(250, () => {
-    this.api.local.set(VIEWPORT_KEY, this.view);
-  });
+
+  // ---------- the document ----------
+
+  /** One change: applied here at once, then written as the same Op onto whatever the
+   *  server holds (api.storage.update retries on another device's write). */
+  private commit(op: Op, o: { undo?: boolean; say?: string } = {}) {
+    if (isEmpty(op)) return;
+    if (this.phone && isPositional(op)) return;
+    const inverse = exec(this.doc, op);
+    if (o.undo !== false) {
+      this.undoStack.push(inverse);
+      if (this.undoStack.length > UNDO_MAX) this.undoStack.shift();
+      this.redoStack = [];
+    }
+    this.write(op);
+    this.relayout(false);
+    if (o.say) this.chrome.say(o.say, { label: "Undo", run: () => this.undo() });
+  }
+
+  private write(op: Op) {
+    void this.writeRaw((cur) => {
+      const d = normalize(cur);
+      exec(d, op);
+      return d;
+    });
+  }
+
+  private writeRaw(change: (cur: unknown) => unknown) {
+    this.writes++;
+    const run = async () => {
+      try {
+        let result: unknown;
+        if (this.api.storage.update) result = await this.api.storage.update(change);
+        else {
+          result = change(await this.api.storage.get());
+          await this.api.storage.set(result);
+        }
+        // The server's answer carries other devices' changes; take it once nothing of
+        // ours is still on its way and no gesture is under way.
+        if (this.writes === 1) this.adopt(result);
+      } catch (e) {
+        this.chrome.say(e instanceof Error ? e.message : "Could not save the layout");
+      } finally {
+        this.writes--;
+      }
+    };
+    this.queue = this.queue.then(run, run);
+    return this.queue;
+  }
+
+  private onRemote(v: unknown) {
+    if (this.writes > 0) return; // our write's answer will carry it
+    this.adopt(v);
+  }
+
+  private adopt(v: unknown) {
+    if (this.gesture || this.editing > 0) {
+      this.pendingRemote = { v };
+      return;
+    }
+    this.pendingRemote = undefined;
+    this.doc = normalize(v);
+    this.relayout(false);
+  }
+
+  undo() {
+    const op = this.undoStack.pop();
+    if (!op) return;
+    if (this.phone && isPositional(op)) {
+      this.undoStack.push(op);
+      return;
+    }
+    this.redoStack.push(exec(this.doc, op));
+    this.write(op);
+    this.relayout(false);
+  }
+
+  redo() {
+    const op = this.redoStack.pop();
+    if (!op) return;
+    this.undoStack.push(exec(this.doc, op));
+    this.write(op);
+    this.relayout(false);
+  }
 
   // ---------- state ----------
 
   private onSnapshot(s: ThemeSnapshot) {
     const schemeChanged = s.scheme !== this.snapshot.scheme;
     this.snapshot = s;
-    if (schemeChanged) {
-      this.root.dataset.scheme = s.scheme;
-      this.dirtyVp = true;
-      this.request();
-    }
-    if (this.ready) this.sync(s, false);
+    if (schemeChanged) this.root.dataset.scheme = s.scheme;
+    if (this.ready) this.sync(s);
   }
 
-  private sync(s: ThemeSnapshot, initial: boolean) {
-    const now = Date.now();
-    setText(this.conn, s.connection === "live" ? "" : s.connection);
-    setClass(this.conn, "is-off", s.connection !== "live");
-    let placed = false;
-    let zChanged = false;
-    const live: SessionSummary[] = [];
-    // Finished subagents per parent session id, and this snapshot's messages per session.
-    const doneKids = new Map<string, number>();
+  private get showDoneSessions(): boolean {
+    return this.api.local.get<boolean>(LOCAL_DONE) ?? false;
+  }
+
+  private label(key: SessionKey): { color: LabelColor; name: string } | undefined {
+    const l = this.snapshot.labels;
+    const c = l?.sessions.get(key);
+    return c ? { color: c, name: l?.names[c] ?? c } : undefined;
+  }
+
+  /** Which sessions are windows here, which hang as pills, which are hidden or done. */
+  private visible() {
+    const s = this.snapshot;
+    const done: SessionSummary[] = [];
+    const hidden: SessionSummary[] = [];
+    const wins: SessionSummary[] = [];
+    const showDone = this.showDoneSessions;
+    const unhide: Record<SessionKey, null> = {};
     for (const sess of s.sessions.values()) {
-      if (sess.parentId && sess.state === "done") doneKids.set(sess.parentId, (doneKids.get(sess.parentId) ?? 0) + 1);
+      const h = this.doc.hidden[sess.key];
+      if (h && h !== sess.state) unhide[sess.key] = null;
+      if (sess.state === "done" && !showDone && this.viewId !== "map") {
+        if (!sess.parentId || !s.sessions.has(`${sess.harness}:${sess.parentId}`)) done.push(sess);
+        continue;
+      }
+      if (sess.state === "done" && this.viewId === "map") continue;
+      if (h && h === sess.state) {
+        hidden.push(sess);
+        continue;
+      }
+      wins.push(sess);
     }
+    if (Object.keys(unhide).length) queueMicrotask(() => this.commit({ t: "hidden", set: unhide }, { undo: false }));
+    // A child session that its orchestrator lists as an agent is that agent's pill.
+    const shown = new Set(wins.map((w) => w.key));
+    this.asPill.clear();
+    if (this.viewId !== "map") {
+      for (const p of wins) {
+        for (const a of p.agents ?? []) if (a.session && shown.has(a.session)) this.asPill.set(a.session, p.key);
+      }
+    }
+    return {
+      wins: wins.filter((w) => !this.asPill.has(w.key)),
+      hidden,
+      done: done.sort((a, b) => (b.endedAt ?? b.lastAt).localeCompare(a.endedAt ?? a.lastAt)),
+    };
+  }
+
+  private sync(s: ThemeSnapshot) {
+    const now = Date.now();
+    this.chrome.setConnection(s.connection);
+    // Forgotten: seen here while live, gone now. Only that prunes the document.
+    if (s.connection === "live") {
+      const gone: SessionKey[] = [];
+      for (const k of this.seen) if (!s.sessions.has(k)) gone.push(k);
+      for (const k of gone) this.seen.delete(k);
+      for (const k of s.sessions.keys()) this.seen.add(k);
+      const op = gone.length ? pruneOp(this.doc, gone) : null;
+      if (op) queueMicrotask(() => this.commit(op, { undo: false }));
+    }
+    const vis = this.visible();
     const acts = new Map<SessionKey, ControlActivity[]>();
     for (const a of s.control) {
       if (!a.session) continue;
@@ -297,265 +483,624 @@ class Canvas implements InputHost {
       list.push(a);
       acts.set(a.session, list);
     }
-    const showing = (sess: SessionSummary) => {
-      if (!sess.parentId) return false;
-      const parent = s.sessions.get(`${sess.harness}:${sess.parentId}`);
-      return !!parent && !!this.layout.showDone?.[parent.key] && this.views.has(parent.key);
-    };
-    for (const sess of s.sessions.values()) {
-      const key = sess.key;
-      const pos = this.layout.windows[key];
-      if (sess.state === "done" && !showing(sess)) {
-        const v = this.views.get(key);
-        if (v) this.leave(v);
-        continue;
-      }
-      if (sess.state !== "done") live.push(sess);
-      if (pos?.hidden && pos.hidden !== sess.state) {
-        delete pos.hidden;
-        placed = true;
-      }
-      if (pos?.hidden) {
-        const v = this.views.get(key);
-        if (v) this.dropView(v);
-        continue;
-      }
-      let view = this.views.get(key);
-      if (!view) {
-        if (!pos) {
-          this.layout.windows[key] = this.place(sess);
-          placed = true;
+    const { hint, own } = this.pairing(vis.wins);
+    const want = new Set<SessionKey>();
+    for (const sess of vis.wins) {
+      want.add(sess.key);
+      const parentKey = sess.parentId ? `${sess.harness}:${sess.parentId}` : undefined;
+      const parent = parentKey ? s.sessions.get(parentKey) : undefined;
+      const ctx = {
+        now,
+        view: this.viewId,
+        label: this.label(sess.key),
+        activities: acts.get(sess.key) ?? [],
+        ownReason: own.get(sess.key),
+        parentTitle: parent ? this.api.format.title(parent) : undefined,
+      };
+      let v = this.wins.get(sess.key);
+      if (!v) {
+        const key = sess.key;
+        v = new WinView(
+          this.api,
+          sess,
+          { onOpen: () => this.openBeside(key), onMore: (at) => this.windowMenu(key, at, "mouse") },
+          ctx,
+        );
+        v.z = this.wins.size + 1;
+        if (this.ready && this.motion && this.layoutSig) {
+          v.el.classList.add("is-new");
+          v.el.addEventListener("animationend", () => v?.el.classList.remove("is-new"), { once: true });
         }
-        view = this.addView(sess, !initial && this.motion);
-        zChanged = true;
-      } else {
-        const before = view.session.state;
-        view.update(sess, now, acts.get(key) ?? [], doneKids.get(sess.id) ?? 0, !!this.layout.showDone?.[key]);
-        if (before !== sess.state) zChanged = true;
-      }
-      const p = this.layout.windows[key];
-      if (p?.expanded && !view.expanded) view.setExpanded(true);
-      this.dirtyWins.add(key);
+        this.winsEl.append(v.el);
+        this.wins.set(sess.key, v);
+      } else v.update(sess, ctx);
+      setClass(v.el, "is-row", this.viewId === "map");
+      const exp = this.isExpanded(sess.key);
+      if (v.expanded !== exp) v.setExpanded(exp);
     }
-    // Sessions the host forgot.
-    for (const [key, v] of this.views) {
-      if (!s.sessions.has(key)) {
-        this.dropView(v);
-        delete this.layout.windows[key];
-        placed = true;
+    for (const [k, v] of this.wins) {
+      if (!want.has(k)) {
+        v.destroy();
+        this.wins.delete(k);
+        this.selection.delete(`w:${k}`);
       }
     }
-    for (const key of Object.keys(this.layout.windows)) {
-      if (!s.sessions.has(key)) {
-        delete this.layout.windows[key];
-        placed = true;
+    // Pills.
+    this.stacks.clear();
+    if (this.viewId !== "map") {
+      for (const sess of vis.wins) {
+        if (!sess.agents?.length) continue;
+        this.stacks.set(sess.key, pillStack(sess, this.doc.showDone.includes(sess.key)));
       }
     }
-    if (zChanged) this.restack();
-    if (placed) this.save();
-    this.recency(now);
-    this.renderTray(live);
-    this.renderShelf();
-    this.renderZones();
+    this.syncPills(now);
+    this.chrome.setHint(hint.text, hint.pair);
+    this.chrome.setCounts(vis.hidden.length, vis.done.length);
+    this.hiddenList = vis.hidden;
+    this.doneList = vis.done.slice(0, DONE_MAX);
+    if (this.viewId === "map") this.map.build();
+    const sig = this.signature(vis.wins);
+    if (sig !== this.layoutSig) {
+      const first = !this.layoutSig;
+      this.layoutSig = sig;
+      this.relayout(!first && isPreset(this.viewId));
+    } else this.request();
     this.applySearch();
-    if (this.mapOn) this.map.build();
-    this.dirtyAll = true;
-    this.request();
+  }
+  private hiddenList: SessionSummary[] = [];
+  private doneList: SessionSummary[] = [];
+
+  /** What moves windows: who is shown, in which group, at which size, with how many pills. */
+  private signature(wins: SessionSummary[]): string {
+    const v = this.viewId;
+    return [
+      v,
+      this.phone,
+      wins
+        .map((s) => {
+          const st = this.stacks.get(s.key);
+          return [
+            s.key,
+            this.groupOf(s),
+            this.sizeOf(s.key).h,
+            st ? `${st.shown.length}${st.more ? "+" : ""}` : "",
+            v === "state" ? s.state : "",
+          ].join(":");
+        })
+        .join("|"),
+    ].join("#");
   }
 
-  private toggleDone(parentKey: SessionKey) {
-    this.layout.showDone ??= {};
-    if (this.layout.showDone[parentKey]) delete this.layout.showDone[parentKey];
-    else this.layout.showDone[parentKey] = true;
-    this.save();
-    this.sync(this.snapshot, false);
-  }
-
-  private addView(sess: SessionSummary, animate: boolean): WinView {
-    const v = new WinView(this.api, sess, {
-      onOpen: () => this.openSplit(sess.key),
-      onClose: () => this.hide(sess.key),
-      onToggleDone: () => this.toggleDone(sess.key),
-    });
-    v.z = ++this.zTop;
-    this.views.set(sess.key, v);
-    if (animate) {
-      v.el.classList.add("is-new");
-      v.el.addEventListener("animationend", () => v.el.classList.remove("is-new"), { once: true });
+  private syncPills(now: number) {
+    const want = new Set<string>();
+    for (const [parent, st] of this.stacks) {
+      for (const a of st.shown) {
+        const id = pillId(parent, a.id);
+        want.add(id);
+        let p = this.pills.get(id);
+        if (!p) {
+          p = new PillView(id, parent, a);
+          this.pills.set(id, p);
+          this.winsEl.append(p.el);
+        } else p.update(a, now);
+      }
+      let more = this.mores.get(parent);
+      if (st.more) {
+        if (!more) {
+          more = el("button", "cv-pill-more");
+          more.type = "button";
+          more.addEventListener("click", (e) => {
+            e.stopPropagation();
+            this.toggleDone(parent);
+          });
+          this.mores.set(parent, more);
+          this.winsEl.append(more);
+        }
+        setText(more, st.more.text);
+        more.setAttribute("aria-expanded", String(st.more.open));
+      } else if (more) {
+        more.remove();
+        this.mores.delete(parent);
+      }
     }
-    this.winsEl.append(v.el);
-    this.applySize(v);
-    return v;
-  }
-
-  private dropView(v: WinView) {
-    this.views.delete(v.key);
-    this.leaving.delete(v.key);
-    v.destroy();
-  }
-
-  /** Done: shrink and slide toward the shelf, then leave the world. */
-  private leave(v: WinView) {
-    if (this.leaving.has(v.key)) return;
-    this.leaving.add(v.key);
-    const r = this.absRect(v.key);
-    if (!this.motion || !r) {
-      this.dropView(v);
-      return;
+    for (const [id, p] of this.pills) {
+      if (!want.has(id)) {
+        p.destroy();
+        this.pills.delete(id);
+        this.selection.delete(`p:${id}`);
+      }
     }
-    const target = this.toWorld(this.size.w / 2, this.size.h - 12);
-    v.el.classList.add("is-leaving");
-    v.el.style.transform = `translate3d(${target.x - r.w / 2}px, ${target.y - r.h / 2}px, 0) scale(0.15)`;
-    const done = () => this.dropView(v);
-    v.el.addEventListener("transitionend", done, { once: true });
-    setTimeout(done, 500);
-  }
-
-  private hide(key: SessionKey) {
-    const pos = this.layout.windows[key];
-    const v = this.views.get(key);
-    if (!pos || !v) return;
-    pos.hidden = v.session.state;
-    if (pos.expanded) {
-      pos.expanded = false;
+    for (const [parent, m] of this.mores) {
+      if (!this.stacks.get(parent)?.more) {
+        m.remove();
+        this.mores.delete(parent);
+      }
     }
-    this.dropView(v);
-    this.save();
-    this.sync(this.snapshot, false);
   }
 
-  private unhide(key: SessionKey) {
-    const pos = this.layout.windows[key];
-    if (pos) delete pos.hidden;
-    this.save();
-    this.sync(this.snapshot, false);
-    const v = this.views.get(key);
-    if (v) this.focusWin(key);
+  private toggleDone(parent: SessionKey) {
+    const on = !this.doc.showDone.includes(parent);
+    this.commit({ t: "showDone", key: parent, on }, { undo: false });
+    this.sync(this.snapshot);
+  }
+
+  /** The pairing hint, said once: the machines on screen that can't take a message. */
+  private pairing(wins: SessionSummary[]): { hint: { text: string; pair: boolean }; own: Map<SessionKey, string> } {
+    const own = new Map<SessionKey, string>();
+    const c = this.api.control;
+    if (!c) return { hint: { text: "", pair: false }, own };
+    const byReason = new Map<string, Set<string>>();
+    const keyReason = new Map<SessionKey, string>();
+    for (const s of wins) {
+      if (s.state === "done") continue;
+      const av = c.availability({ session: s.key });
+      if (av.ok || !av.reason) continue;
+      const set = byReason.get(av.reason) ?? new Set<string>();
+      set.add(s.machine ?? "");
+      byReason.set(av.reason, set);
+      keyReason.set(s.key, av.reason);
+    }
+    if (!byReason.size) return { hint: { text: "", pair: false }, own };
+    const pairing = [...byReason.keys()].filter((r) => /^pair /i.test(r));
+    const machines = [...new Set(pairing.flatMap((r) => [...byReason.get(r)!]))].filter(Boolean).sort();
+    let text = "";
+    let pair = false;
+    if (machines.length) {
+      text = `Pair ${listWords(machines)} to send from here`;
+      pair = true;
+    } else if (byReason.size === 1) text = capital([...byReason.keys()][0]!);
+    // A reason the status bar doesn't say is said in its own window.
+    for (const [k, r] of keyReason) {
+      const covered = (pair && /^pair /i.test(r)) || (!pair && byReason.size === 1);
+      if (!covered) own.set(k, capital(r));
+    }
+    return { hint: { text, pair }, own };
   }
 
   private tick() {
     const now = Date.now();
-    for (const v of this.views.values()) v.tick(now);
-    this.recency(now);
+    for (const v of this.wins.values()) v.tick(now);
+    for (const p of this.pills.values()) p.update(p.agent, now);
   }
 
-  /** The latest session gets its word; the others' borders and title fade by age bucket. */
-  private recency(now: number) {
-    let latest: WinView | undefined;
-    let latestAt = Number.NEGATIVE_INFINITY;
-    for (const v of this.views.values()) {
-      if (v.session.parentId || v.session.state === "done") continue;
-      const at = Date.parse(v.session.lastAt);
-      if (at > latestAt) {
-        latestAt = at;
-        latest = v;
+  // ---------- views and layout ----------
+
+  setView(v: ViewId) {
+    if (v === this.viewId) return;
+    this.saveVp.flush();
+    this.viewId = v;
+    this.api.local.set(LOCAL_VIEW, v);
+    this.chrome.setView(v);
+    this.selection.clear();
+    this.applyView(true);
+    this.layoutSig = "";
+    this.sync(this.snapshot);
+    const vp = v === "layout" ? this.api.local.get<Viewport>(vpKey(v)) : null;
+    if (vp && !this.phone) this.animateTo({ ...vp });
+    else this.fit(true);
+    this.animateLayout();
+  }
+
+  private applyView(fresh: boolean) {
+    const v = this.viewId;
+    this.root.dataset.view = v;
+    this.map.setOn(v === "map");
+    if (v === "map" && fresh) this.map.build();
+  }
+
+  private relayoutSoon = debounce(120, () => this.relayout(false));
+
+  /** Positions for the current view; with `animate`, windows move there over 320 ms. */
+  private relayout(animate: boolean) {
+    if (!this.ready) return;
+    const vis = [...this.wins.values()].map((w) => w.session);
+    this.rects.clear();
+    this.heads = [];
+    this.phoneBoxes.clear();
+    if (this.viewId === "map") {
+      this.map.build();
+      this.map.layout();
+      for (const [k, r] of this.map.rows) if (this.wins.has(k)) this.rects.set(k, r);
+    } else if (isPreset(this.viewId) || this.phone) {
+      const groups = this.viewId === "layout" ? this.phoneLayoutGroups(vis) : this.groups(vis);
+      const cellGroups: Group[] = groups.map((g) => ({
+        id: g.id,
+        cells: g.keys.map(
+          (k): Cell => (k.startsWith("note:") ? { key: k, span: 1, h: this.phoneNoteH(k.slice(5)) } : this.cell(k)),
+        ),
+      }));
+      const r = gridLayout(cellGroups, {
+        viewW: this.size.w - 96,
+        viewH: this.size.h - this.barH - STATUS_H,
+        stack: this.phone,
+      });
+      for (const [k, p] of r.cells) {
+        if (k.startsWith("note:")) {
+          const id = k.slice(5);
+          this.phoneBoxes.set(id, { x: p.x, y: p.y, w: this.phoneW, h: this.phoneNoteH(id) });
+          continue;
+        }
+        const s = this.sizeOf(k);
+        this.rects.set(k, { x: p.x, y: p.y, ...s });
+      }
+      const boxes = new Map(r.boxes.map((b) => [b.id, b]));
+      for (const g of groups) {
+        const box = boxes.get(g.id);
+        if (box && g.title) this.heads.push({ ...g, box, count: g.keys.length });
+      }
+    } else {
+      this.layoutMine(vis);
+    }
+    if (animate && this.motion) this.animateLayout();
+    this.syncHeads();
+    this.syncAreas();
+    this.request();
+  }
+
+  private animateLayout() {
+    if (!this.motion) return;
+    this.world.classList.add("is-tidying");
+    clearTimeout(this.tidying);
+    this.tidying = setTimeout(() => {
+      this.world.classList.remove("is-tidying");
+      this.request();
+    }, TWEEN_MS + 40);
+  }
+
+  private phoneNoteH(id: string) {
+    return Math.max(NOTE_MIN_H, Math.min(this.doc.notes[id]?.h ?? NOTE_H, 160));
+  }
+
+  /** A phone's width for a window: the screen less its gutters. */
+  private get phoneW() {
+    return Math.max(WIN_W, this.size.w - 24);
+  }
+
+  private isExpanded(key: SessionKey): boolean {
+    if (this.viewId === "map") return false;
+    if (this.canArrange()) return !!this.doc.windows[key]?.expanded;
+    return this.expandedHere.has(key);
+  }
+
+  private answerable(s: SessionSummary): boolean {
+    const att = s.openAttentions[0];
+    if (s.state !== "needs_you" || att?.kind !== "permission" || !this.api.control) return false;
+    return this.api.control.availability({ session: s.key }).ok;
+  }
+
+  /** A window's size by kind (§5.2): fixed, so the grid is clean. */
+  private sizeOf(key: SessionKey): { w: number; h: number } {
+    if (this.viewId === "map") return this.map.rows.get(key) ?? { w: 240, h: 32 };
+    const s = this.snapshot.sessions.get(key);
+    const base = this.phone ? this.phoneW : WIN_W;
+    if (this.isExpanded(key)) {
+      const e = this.doc.windows[key];
+      if (this.phone) return { w: base, h: EXP_H };
+      return { w: e?.w ?? EXP_W, h: e?.h ?? EXP_H };
+    }
+    return { w: base, h: s && this.answerable(s) ? WIN_H_ASK : WIN_H };
+  }
+
+  /** A window and its pills as one grid cell: two columns wide beside it, or (a phone)
+   *  the pills stacked under it. */
+  private cell(key: SessionKey): Cell {
+    const size = this.sizeOf(key);
+    const st = this.stacks.get(key);
+    const sh = st ? stackHeight(st) : 0;
+    if (!sh) return { key, span: size.w > WIN_W && !this.phone ? 2 : 1, h: size.h };
+    if (this.phone) return { key, span: 1, h: size.h + PILL_GAP + sh };
+    return { key, span: 2, h: Math.max(size.h, sh) };
+  }
+
+  /** The footprint of a window with its pills, for finding free space. */
+  private footprint(key: SessionKey, x: number, y: number): Rect {
+    const c = this.cell(key);
+    return { x, y, w: c.span === 2 ? WIN_W * 2 + COL_GAP : this.sizeOf(key).w, h: c.h };
+  }
+
+  private groupOf(s: SessionSummary): string {
+    switch (this.viewId) {
+      case "state":
+        return s.state;
+      case "machine":
+        return s.machine ? `m:${s.machine}` : "m:";
+      case "harness":
+        return `h:${s.harness}`;
+      case "repo":
+        return s.repo ? `r:${repoParts(s.repo).short}` : "r:";
+      case "label":
+        return `l:${this.snapshot.labels?.sessions.get(s.key) ?? ""}`;
+      case "layout":
+        return this.phone ? `a:${areaOf(this.doc, s.key) ?? ""}` : "";
+      default:
+        return "";
+    }
+  }
+
+  /** The preset's groups in their order, each with its windows sorted: by state (needs
+   *  you, working, stale, idle), then the newest. */
+  private groups(
+    vis: SessionSummary[],
+  ): { id: string; title: string; keys: SessionKey[]; label?: LabelColor; icon?: string }[] {
+    const by = new Map<string, SessionSummary[]>();
+    for (const s of vis) {
+      const g = this.groupOf(s);
+      const list = by.get(g) ?? [];
+      list.push(s);
+      by.set(g, list);
+    }
+    const sortWins = (list: SessionSummary[]) =>
+      list.sort(
+        (a, b) => STATE_ORDER.indexOf(a.state) - STATE_ORDER.indexOf(b.state) || b.lastAt.localeCompare(a.lastAt),
+      );
+    const needs = (list: SessionSummary[]) => list.filter((s) => s.state === "needs_you").length;
+    let ids = [...by.keys()];
+    const v = this.viewId;
+    if (v === "state") ids = STATE_ORDER.filter((st) => by.has(st));
+    else if (v === "label") ids = [...LABEL_COLORS.map((c) => `l:${c}`), "l:"].filter((id) => by.has(id));
+    else {
+      ids.sort((a, b) => {
+        const empty = (id: string) => (id.endsWith(":") ? 1 : 0);
+        return (
+          empty(a) - empty(b) ||
+          needs(by.get(b)!) - needs(by.get(a)!) ||
+          this.groupTitle(a).localeCompare(this.groupTitle(b))
+        );
+      });
+    }
+    return ids.map((id) => {
+      const list = sortWins(by.get(id)!);
+      const g: { id: string; title: string; keys: SessionKey[]; label?: LabelColor; icon?: string } = {
+        id,
+        title: this.groupTitle(id),
+        keys: list.map((s) => s.key),
+      };
+      if (v === "label" && id.length > 2) g.label = id.slice(2) as LabelColor;
+      if (v === "harness") g.icon = this.api.format.harnessIcon?.(id.slice(2))?.svg;
+      return g;
+    });
+  }
+
+  private groupTitle(id: string): string {
+    const v = this.viewId;
+    if (v === "state") return STATE_TITLE[id] ?? id;
+    const rest = id.slice(2);
+    if (v === "machine") return rest || "No machine";
+    if (v === "harness") return harnessName(this.api, rest);
+    if (v === "repo") return rest || "No repo";
+    if (v === "label") return rest ? (this.snapshot.labels?.names[rest as LabelColor] ?? rest) : "No label";
+    if (v === "layout") return rest ? this.doc.areas[rest]?.title || "Untitled area" : "Not in an area";
+    return rest;
+  }
+
+  /** My layout on a phone: the person's areas as groups (top to bottom), then the rest,
+   *  then the notes. Computed; nothing is stored. */
+  private phoneLayoutGroups(vis: SessionSummary[]) {
+    const areas = Object.entries(this.doc.areas).sort((a, b) => a[1].y - b[1].y || a[1].x - b[1].x);
+    const out: { id: string; title: string; keys: SessionKey[]; label?: LabelColor }[] = [];
+    const sorted = [...vis].sort(
+      (a, b) => STATE_ORDER.indexOf(a.state) - STATE_ORDER.indexOf(b.state) || b.lastAt.localeCompare(a.lastAt),
+    );
+    for (const [id, a] of areas) {
+      out.push({
+        id: `a:${id}`,
+        title: a.title || "Untitled area",
+        keys: sorted.filter((s) => a.members[s.key]).map((s) => s.key),
+        label: a.label,
+      });
+    }
+    const free = sorted.filter((s) => !areaOf(this.doc, s.key)).map((s) => s.key);
+    if (free.length) out.push({ id: "a:", title: areas.length ? "Not in an area" : "", keys: free });
+    const notes = Object.keys(this.doc.notes);
+    if (notes.length) out.push({ id: "notes", title: "Notes", keys: notes.map((n) => `note:${n}`) });
+    return out;
+  }
+
+  /** My layout on a desktop: members inside their area, the rest where the person put
+   *  them; a window that has no place yet gets the nearest free spot (written once). */
+  private layoutMine(vis: SessionSummary[]) {
+    const placed: Record<SessionKey, { x: number; y: number }> = {};
+    const fresh = vis.filter((s) => !this.doc.windows[s.key] && !areaOf(this.doc, s.key));
+    for (const s of vis) {
+      const p = this.minePos(s.key);
+      if (p) this.rects.set(s.key, { ...p, ...this.sizeOf(s.key) });
+    }
+    if (!fresh.length) return;
+    const nothingYet = Object.keys(this.doc.windows).length === 0 && Object.keys(this.doc.areas).length === 0;
+    if (nothingYet) {
+      // A first open: the free windows on a grid, the way Tidy would.
+      const cells = fresh.map((s) => this.cell(s.key));
+      const out = new Map<string, { x: number; y: number }>();
+      gridCells(cells, colsFor(cells.reduce((n, c) => n + c.span, 0)), out);
+      for (const [k, p] of out) placed[k] = p;
+    } else {
+      const taken = [...this.rects.entries()].map(([k, r]) => this.footprint(k, r.x, r.y));
+      for (const a of Object.values(this.doc.areas)) taken.push(a);
+      for (const n of Object.values(this.doc.notes)) taken.push(n);
+      for (const s of fresh) {
+        let centre = this.toWorld(this.size.w / 2, this.size.h / 2);
+        const nodeId = this.pendingStart.get(s.key);
+        if (nodeId) {
+          this.pendingStart.delete(s.key);
+          const nr = this.map.nodeRect(nodeId);
+          if (nr) centre = { x: nr.x + nr.w / 2, y: nr.y - 120 };
+        }
+        const fp = this.footprint(s.key, 0, 0);
+        const r = findFree(centre, fp.w, fp.h, taken);
+        placed[s.key] = { x: r.x, y: r.y };
+        taken.push({ ...r });
       }
     }
-    for (const v of this.views.values()) {
-      const isLatest = v === latest;
-      v.setLatest(isLatest);
-      const age = now - Date.parse(v.session.lastAt);
-      let bucket = 0;
-      if (!isLatest && v.session.state !== "needs_you") {
-        while (bucket < AGE_STEPS_MS.length && age >= AGE_STEPS_MS[bucket]!) bucket++;
+    for (const [k, p] of Object.entries(placed)) this.rects.set(k, { ...p, ...this.sizeOf(k) });
+    for (const [k, p] of Object.entries(placed)) this.toPlace[k] = { x: Math.round(p.x), y: Math.round(p.y) };
+    this.placeLater();
+  }
+  private toPlace: Record<SessionKey, { x: number; y: number }> = {};
+  /** New windows' first places, written as one Op. */
+  private placeLater = debounce(400, () => {
+    const set = this.toPlace;
+    this.toPlace = {};
+    for (const k of Object.keys(set)) if (this.doc.windows[k] || areaOf(this.doc, k)) delete set[k];
+    if (Object.keys(set).length && !this.phone) this.commit({ t: "win", set }, { undo: false });
+  });
+
+  /** A window's place in My layout from the document (a member: its area plus offset). */
+  private minePos(key: SessionKey): { x: number; y: number } | undefined {
+    const aid = areaOf(this.doc, key);
+    if (aid) {
+      const a = this.doc.areas[aid]!;
+      const m = a.members[key]!;
+      return { x: a.x + m.dx, y: a.y + m.dy };
+    }
+    const w = this.doc.windows[key];
+    return w ? { x: w.x, y: w.y } : (this.toPlace[key] ?? undefined);
+  }
+
+  private syncHeads() {
+    const want = new Set<string>();
+    for (const h of this.heads) {
+      want.add(h.id);
+      let e = this.headEls.get(h.id);
+      if (!e) {
+        e = el("div", "cv-head");
+        e.dataset.group = h.id;
+        e.setAttribute("role", "heading");
+        e.setAttribute("aria-level", "2");
+        this.headsEl.append(e);
+        this.headEls.set(h.id, e);
       }
-      v.setAge(bucket);
+      const sig = `${h.title}|${h.count}|${h.label ?? ""}|${h.icon ? 1 : 0}`;
+      if (e.dataset.sig !== sig) {
+        e.dataset.sig = sig;
+        e.replaceChildren();
+        if (h.label) e.append(el("span", `label-dot label-dot--${h.label}`));
+        if (h.icon) {
+          const i = el("span", "cv-head-icon");
+          i.innerHTML = h.icon;
+          e.append(i);
+        }
+        e.append(el("span", "cv-head-t", h.title), el("span", "cv-head-n num", String(h.count)));
+      }
+      e.style.transform = `translate3d(${h.box.x}px, ${h.box.y}px, 0)`;
+      e.style.width = `${Math.max(h.box.w, WIN_W)}px`;
+    }
+    for (const [id, e] of this.headEls) {
+      if (!want.has(id)) {
+        e.remove();
+        this.headEls.delete(id);
+      }
     }
   }
 
-  // ---------- colour and lines ----------
-
-  private get colourOn(): boolean {
-    return this.api.local.get<boolean>(COLOUR_LOCAL_KEY) ?? true;
-  }
-
-  private toggleColour() {
-    const on = !this.colourOn;
-    this.api.local.set(COLOUR_LOCAL_KEY, on);
-    this.applyColour();
-    if (on && !this.api.local.get<boolean>(LEGEND_SEEN_KEY)) {
-      this.api.local.set(LEGEND_SEEN_KEY, true);
-      this.showLegend(true);
+  private syncAreas() {
+    const names = this.snapshot.labels?.names as Record<LabelColor, string> | undefined;
+    const mine = this.viewId === "layout";
+    const showAreas = mine && !this.phone;
+    const want = new Set(showAreas ? Object.keys(this.doc.areas) : []);
+    for (const id of want) {
+      const a = this.doc.areas[id]!;
+      let v = this.areaViews.get(id);
+      if (!v) {
+        v = new AreaView(id);
+        this.areaViews.set(id, v);
+        this.areasEl.append(v.el);
+      }
+      const members = Object.keys(a.members).filter((k) => this.wins.has(k)).length;
+      v.update(a, members, names);
     }
-    if (!on) this.showLegend(false);
-  }
-
-  private applyColour() {
-    const on = this.colourOn;
-    setClass(this.root, "has-colour", on);
-    setClass(this.colourBtn, "is-on", on);
-  }
-
-  showLegend(on: boolean) {
-    this.legend.hidden = !on;
-    setClass(this.root, "has-legend", on);
-  }
-
-  get legendShown() {
-    return !this.legend.hidden;
-  }
-
-  toggleLegend() {
-    this.showLegend(!this.legendShown);
-  }
-
-  private get linesMode(): LinesMode {
-    const m = this.api.local.get<LinesMode>(LINES_LOCAL_KEY);
-    return m && LINES_MODES.includes(m) ? m : "hovered";
-  }
-
-  private cycleLines() {
-    const next = LINES_MODES[(LINES_MODES.indexOf(this.linesMode) + 1) % LINES_MODES.length]!;
-    this.api.local.set(LINES_LOCAL_KEY, next);
-    this.applyLines();
-  }
-
-  private applyLines() {
-    const mode = this.linesMode;
-    for (const m of LINES_MODES) setClass(this.root, `lines-${m}`, m === mode);
-    setText(this.linesBtn, `Lines · ${mode}`);
-  }
-
-  // ---------- geometry ----------
-
-  private pos(key: SessionKey): WinPos {
-    const p = this.layout.windows[key];
-    if (p) return p;
-    const s = this.snapshot.sessions.get(key);
-    const sub = !!s?.parentId;
-    const np = { x: 0, y: 0, w: sub ? SUB_W : WIN_W, h: sub ? SUB_H : WIN_H, rel: sub };
-    this.layout.windows[key] = np;
-    return np;
-  }
-
-  private parentKey(key: SessionKey): SessionKey | undefined {
-    const s = this.snapshot.sessions.get(key);
-    if (!s?.parentId) return undefined;
-    const pk = `${s.harness}:${s.parentId}`;
-    return this.layout.windows[pk] ? pk : undefined;
-  }
-
-  private shown(key: SessionKey): { w: number; h: number } {
-    const p = this.pos(key);
-    if (p.expanded) {
-      // On a phone an expanded window fits the screen's width instead.
-      const maxW = this.narrow ? Math.max(p.w, (this.size.w - 24) / this.view.k) : Number.POSITIVE_INFINITY;
-      return { w: Math.min(maxW, Math.max(p.ew ?? 0, p.w, EXP_W)), h: Math.max(p.eh ?? 0, p.h, EXP_H) };
+    for (const [id, v] of this.areaViews) {
+      if (!want.has(id)) {
+        v.destroy();
+        this.areaViews.delete(id);
+      }
     }
-    return { w: p.w, h: p.h };
+    const notes = new Set(mine ? Object.keys(this.doc.notes) : []);
+    for (const id of notes) {
+      const n = this.doc.notes[id]!;
+      let v = this.noteViews.get(id);
+      if (!v) {
+        v = new NoteView(id);
+        this.noteViews.set(id, v);
+        this.notesEl.append(v.el);
+      }
+      v.update(n, names);
+      const pb = this.phoneBoxes.get(id);
+      if (pb) v.place(pb);
+    }
+    for (const [id, v] of this.noteViews) {
+      if (!notes.has(id)) {
+        v.destroy();
+        this.noteViews.delete(id);
+      }
+    }
   }
 
-  /** Absolute world rect, resolving a subagent's offset from its parent. */
-  private absRect(key: SessionKey): Rect | null {
-    const p = this.layout.windows[key];
-    if (!p) return null;
-    const { w, h } = this.shown(key);
-    const pk = p.rel ? this.parentKey(key) : undefined;
-    if (pk) {
-      const pr = this.absRect(pk);
-      if (pr) return { x: pr.x + p.x, y: pr.y + p.y, w, h };
+  // ---------- geometry at render (drags applied) ----------
+
+  /** A window's rect now: its place, plus whatever a drag is carrying. */
+  private winRect(key: SessionKey): Rect | null {
+    const r = this.rects.get(key);
+    if (!r) return null;
+    const m = this.moving;
+    if (!m) return this.sized(key, r);
+    if (this.carried(`w:${key}`)) return this.sized(key, { ...r, x: r.x + m.dx, y: r.y + m.dy });
+    const aid = areaOf(this.doc, key);
+    if (aid && this.carried(`a:${aid}`)) return this.sized(key, { ...r, x: r.x + m.dx, y: r.y + m.dy });
+    return this.sized(key, r);
+  }
+
+  private sized(key: SessionKey, r: Rect): Rect {
+    const z = this.resizing;
+    if (z && z.item === `w:${key}`) {
+      return { ...r, w: clamp(z.w + z.dw, EXP_W, EXP_MAX_W), h: clamp(z.h + z.dh, 240, EXP_MAX_H) };
     }
-    return { x: p.x, y: p.y, w, h };
+    return r;
+  }
+
+  private carried(item: string) {
+    return !!this.moving?.items.some((i) => i.item === item);
+  }
+
+  private areaRect(id: string): Rect | null {
+    const a = this.doc.areas[id];
+    if (!a) return null;
+    let r: Rect = { x: a.x, y: a.y, w: a.w, h: a.h };
+    if (this.moving && this.carried(`a:${id}`)) r = { ...r, x: r.x + this.moving.dx, y: r.y + this.moving.dy };
+    const z = this.resizing;
+    if (z && z.item === `a:${id}`)
+      r = { ...r, w: Math.max(AREA_MIN_W, z.w + z.dw), h: Math.max(AREA_MIN_H, z.h + z.dh) };
+    return r;
+  }
+
+  private noteRect(id: string): Rect | null {
+    const pb = this.phoneBoxes.get(id);
+    if (pb) return pb;
+    const n = this.doc.notes[id];
+    if (!n) return null;
+    let r: Rect = { x: n.x, y: n.y, w: n.w, h: n.h };
+    if (this.moving && this.carried(`n:${id}`)) r = { ...r, x: r.x + this.moving.dx, y: r.y + this.moving.dy };
+    const z = this.resizing;
+    if (z && z.item === `n:${id}`)
+      r = { ...r, w: Math.max(NOTE_MIN_W, z.w + z.dw), h: Math.max(NOTE_MIN_H, z.h + z.dh) };
+    return r;
+  }
+
+  /** Where a parent's pills go: beside it (a column 36 px right of it, tops aligned), or
+   *  on a phone under it, indented. */
+  private pillRects(parent: SessionKey): { pills: [string, Rect][]; more?: Rect } {
+    const st = this.stacks.get(parent);
+    const r = this.winRect(parent);
+    if (!st || !r) return { pills: [] };
+    const out: [string, Rect][] = [];
+    const stacked = this.phone;
+    const x = stacked ? r.x + PILL_INDENT : r.x + r.w + PILL_OFF;
+    const w = stacked ? r.w - PILL_INDENT : PILL_W;
+    let y = stacked ? r.y + r.h + PILL_GAP : r.y;
+    for (const a of st.shown) {
+      out.push([pillId(parent, a.id), { x, y, w, h: PILL_H }]);
+      y += PILL_H + PILL_GAP;
+    }
+    return { pills: out, more: st.more ? { x, y, w, h: PILL_MORE_H } : undefined };
   }
 
   toWorld(sx: number, sy: number) {
@@ -566,61 +1111,39 @@ class Canvas implements InputHost {
     return { x: wx * this.view.k + this.view.x, y: wy * this.view.k + this.view.y };
   }
 
-  private visibleRects(): Rect[] {
+  /** Everything on the canvas, for Fit and the minimap. */
+  private contentRects(): Rect[] {
     const out: Rect[] = [];
-    for (const key of this.views.keys()) {
-      const r = this.absRect(key);
-      if (r) out.push(r);
+    for (const k of this.wins.keys()) {
+      const r = this.winRect(k);
+      if (!r) continue;
+      out.push(r);
+      const p = this.pillRects(k);
+      for (const [, pr] of p.pills) out.push(pr);
+      if (p.more) out.push(p.more);
+    }
+    for (const h of this.heads) out.push({ x: h.box.x, y: h.box.y, w: h.box.w, h: HEAD_H });
+    if (this.viewId === "layout") {
+      for (const id of this.areaViews.keys()) {
+        const r = this.areaRect(id);
+        if (r) out.push(r);
+      }
+      for (const id of this.noteViews.keys()) {
+        const r = this.noteRect(id);
+        if (r) out.push(r);
+      }
+    }
+    if (this.viewId === "map") {
+      const l = this.map.laneBounds();
+      if (l) out.push(l);
+      for (const n of this.map.nodes.values()) out.push({ x: n.x, y: n.y, w: n.w, h: n.h });
     }
     return out;
   }
 
-  /** A new window goes to the nearest free spot around the viewport centre; a subagent
-   *  hangs under its parent, to the right of its siblings. */
-  private place(sess: SessionSummary): WinPos {
-    const sub = !!sess.parentId;
-    const w = sub ? SUB_W : WIN_W;
-    const h = sub ? SUB_H : WIN_H;
-    if (sub) {
-      const pk = `${sess.harness}:${sess.parentId}`;
-      const parent = this.layout.windows[pk];
-      if (parent) {
-        // The next free row in the column beside the parent: the tree reads left to right.
-        const siblings = [...this.snapshot.sessions.values()].filter(
-          (s) =>
-            s.parentId === sess.parentId &&
-            s.key !== sess.key &&
-            this.layout.windows[s.key]?.rel &&
-            this.views.has(s.key),
-        );
-        const taken = siblings.map((s) => this.layout.windows[s.key]!);
-        const x = parent.w + TREE_GAP;
-        for (let y = 0; y < 4000; y += h + TREE_ROW) {
-          const r = { x, y, w, h };
-          if (!taken.some((t) => overlaps(r, t, 2))) return { ...r, rel: true };
-        }
-        return { x, y: 0, w, h, rel: true };
-      }
-    }
-    let centre = this.toWorld(this.size.w / 2, this.size.h / 2);
-    const taken = this.visibleRects();
-    // A session the person started from the map appears just above its machine's node.
-    const nodeId = this.pendingStart.get(sess.key);
-    if (nodeId) {
-      this.pendingStart.delete(sess.key);
-      const nr = this.map.nodeRect(nodeId);
-      if (nr) {
-        centre = { x: nr.x + nr.w / 2, y: nr.y - 40 - h / 2 };
-        taken.push(...[...this.map.nodes.values()].map((n) => ({ x: n.x, y: n.y, w: n.w, h: n.h })));
-      }
-    }
-    const r = findFree(centre, w, h, taken);
-    return { x: r.x, y: r.y, w, h };
-  }
-
   // ---------- rendering ----------
 
-  private request() {
+  request() {
     if (this.frame) return;
     this.frame = requestAnimationFrame((t) => {
       this.frame = 0;
@@ -634,233 +1157,130 @@ class Canvas implements InputHost {
       const e = 1 - (1 - p) ** 3;
       const { from, to } = this.tween;
       this.view = { x: from.x + (to.x - from.x) * e, y: from.y + (to.y - from.y) * e, k: from.k + (to.k - from.k) * e };
-      this.dirtyVp = true;
       if (p >= 1) this.tween = undefined;
       else this.request();
     }
-    if (this.dirtyVp) {
-      const { x, y, k } = this.view;
-      this.world.style.transform = `translate3d(${x}px, ${y}px, 0) scale(${k})`;
-      let s = 32 * k;
-      while (s < 18) s *= 2;
-      while (s > 72) s /= 2;
-      this.root.style.setProperty("--cv-grid", `${s}px`);
-      this.root.style.setProperty("--cv-grid-x", `${x}px`);
-      this.root.style.setProperty("--cv-grid-y", `${y}px`);
-      setText(this.zoomLabel, `${Math.round(k * 100)}%`);
-      this.dirtyVp = false;
-      this.saveVp();
+    const { x, y, k } = this.view;
+    this.world.style.transform = `translate3d(${x}px, ${y}px, 0) scale(${k})`;
+    let g = 32 * k;
+    while (g < 18) g *= 2;
+    while (g > 72) g /= 2;
+    this.root.style.setProperty("--cv-grid", `${g}px`);
+    this.root.style.setProperty("--cv-grid-x", `${x}px`);
+    this.root.style.setProperty("--cv-grid-y", `${y}px`);
+    this.chrome.setZoom(k);
+    this.saveVp();
+
+    for (const [key, v] of this.wins) {
+      const r = this.winRect(key);
+      if (!r) {
+        v.el.style.visibility = "hidden";
+        continue;
+      }
+      v.el.style.visibility = "";
+      place(v.el, r);
+      const z = String(v.z);
+      if (v.el.style.zIndex !== z) v.el.style.zIndex = z;
+      setClass(v.el, "is-selected", this.selection.has(`w:${key}`));
     }
-    const keys = this.dirtyAll ? this.views.keys() : this.dirtyWins;
-    for (const key of keys) {
-      const v = this.views.get(key);
-      if (v && !this.leaving.has(key)) this.applyWin(v);
+    for (const parent of this.stacks.keys()) {
+      const { pills, more } = this.pillRects(parent);
+      // Pills stack with their parent, so a window raised over it doesn't cut them.
+      const z = String(this.wins.get(parent)?.z ?? 0);
+      for (const [id, r] of pills) {
+        const p = this.pills.get(id);
+        if (!p) continue;
+        place(p.el, r);
+        if (p.el.style.zIndex !== z) p.el.style.zIndex = z;
+        setClass(p.el, "is-selected", this.selection.has(`p:${id}`));
+      }
+      const m = this.mores.get(parent);
+      if (m && more) {
+        place(m, more);
+        m.style.zIndex = z;
+      }
     }
-    this.dirtyWins.clear();
-    this.dirtyAll = false;
+    if (this.viewId === "layout") {
+      for (const [id, v] of this.areaViews) {
+        const r = this.areaRect(id);
+        if (r) v.place(r);
+        setClass(v.el, "is-selected", this.selection.has(`a:${id}`));
+        setClass(v.el, "is-target", this.dropArea === id);
+      }
+      for (const [id, v] of this.noteViews) {
+        const r = this.noteRect(id);
+        if (r) v.place(r);
+        setClass(v.el, "is-selected", this.selection.has(`n:${id}`));
+      }
+    }
     this.drawTethers();
-    this.drawZones();
-    if (this.mapOn) {
-      this.map.layoutNodes();
-      this.map.draw();
-    }
+    if (this.viewId === "map") this.map.draw();
     this.drawMinimap();
   }
 
-  private applyWin(v: WinView) {
-    const r = this.absRect(v.key);
-    if (!r) return;
-    v.el.style.transform = `translate3d(${r.x}px, ${r.y}px, 0)`;
-    this.applySize(v);
-    const z = v.session.state === "needs_you" ? Z_NEEDS + v.z : v.z;
-    const zs = String(z);
-    if (v.el.style.zIndex !== zs) v.el.style.zIndex = zs;
-  }
-
-  private applySize(v: WinView) {
-    const { w, h } = this.shown(v.key);
-    const ws = `${w}px`;
-    const hs = `${h}px`;
-    if (v.el.style.width !== ws) v.el.style.width = ws;
-    if (v.el.style.height !== hs) v.el.style.height = hs;
-  }
-
-  private restack() {
-    for (const v of this.views.values()) this.dirtyWins.add(v.key);
-  }
-
-  /** Parent → child as an orthogonal hairline: out of the parent's right edge, down a
-   *  trunk, into the child's left edge. */
+  /** Parent → pills: out of the window's right edge at the title bar's centre, along a
+   *  trunk 18 px out, into each pill's left edge at its centre. Open agents in --fg-4,
+   *  done in --line; the hovered or selected pill's path in --fg-2. */
   private drawTethers() {
-    const paths: string[] = [];
-    for (const v of this.views.values()) {
-      const p = this.layout.windows[v.key];
-      if (!p?.rel) continue;
-      const pk = this.parentKey(v.key);
-      if (!pk || !this.views.has(pk)) continue;
-      const a = this.absRect(v.key);
-      const b = this.absRect(pk);
-      if (!a || !b) continue;
-      const x1 = b.x + b.w;
-      const y1 = b.y + 14;
-      const x2 = a.x;
-      const y2 = a.y + 12;
-      const right = x2 >= x1;
-      const trunk = right ? x1 + Math.min(TREE_GAP / 2, (x2 - x1) / 2) : x1 + 8;
-      paths.push(right ? `M${x1},${y1} H${trunk} V${y2} H${x2}` : `M${x1},${y1} H${trunk} V${y2} H${x2}`);
+    const paths: [string, string][] = [];
+    for (const parent of this.stacks.keys()) {
+      const r = this.winRect(parent);
+      if (!r) continue;
+      const { pills } = this.pillRects(parent);
+      if (!pills.length) continue;
+      const st = this.stacks.get(parent)!;
+      const lit = new Set<string>();
+      for (const [id] of pills) if (this.hoverPill === id || this.selection.has(`p:${id}`)) lit.add(id);
+      if (this.phone) {
+        const tx = r.x + 12;
+        const last = pills[pills.length - 1]![1];
+        paths.push([`M${tx},${r.y + r.h} V${last.y + last.h / 2}`, "cv-tether"]);
+        pills.forEach(([id, pr], i) => {
+          const done = st.shown[i]?.state === "done";
+          const cls = lit.has(id) ? "cv-tether is-lit" : done ? "cv-tether is-done" : "cv-tether";
+          paths.push([`M${tx},${pr.y + pr.h / 2} H${pr.x}`, cls]);
+        });
+        continue;
+      }
+      const x1 = r.x + r.w;
+      const y1 = r.y + 16;
+      const trunk = x1 + TRUNK_OFF;
+      const lastY = pills[pills.length - 1]![1].y + PILL_H / 2;
+      paths.push([`M${x1},${y1} H${trunk} V${Math.max(y1, lastY)}`, "cv-tether"]);
+      pills.forEach(([id, pr], i) => {
+        const cy = pr.y + pr.h / 2;
+        const done = st.shown[i]?.state === "done";
+        paths.push([`M${trunk},${cy} H${pr.x}`, done ? "cv-tether is-done" : "cv-tether"]);
+        if (lit.has(id)) paths.push([`M${x1},${y1} H${trunk} V${cy} H${pr.x}`, "cv-tether is-lit"]);
+      });
     }
-    const sig = paths.join(";");
+    const sig = paths.map((p) => p.join("@")).join(";");
     if (this.treeG.dataset.sig === sig) return;
     this.treeG.dataset.sig = sig;
-    this.treeG.replaceChildren(...paths.map((d) => svg("path", { d, class: "cv-tether" })));
+    this.treeG.replaceChildren(...paths.map(([d, cls]) => svg("path", { d, class: cls })));
   }
 
-  // ---------- zones ----------
+  // ---------- the minimap ----------
 
-  private renderZones() {
-    const on = this.layout.zonesOn;
-    setClass(this.root, "has-zones", on);
-    if (!on) {
-      this.zonesEl.replaceChildren();
-      this.zoneEls.clear();
-      return;
-    }
-    const names = new Set<string>();
-    for (const m of this.snapshot.machines.keys()) names.add(m);
-    for (const s of this.snapshot.sessions.values()) if (s.machine) names.add(s.machine);
-    for (const name of names) {
-      if (!this.layout.zones[name]) this.layout.zones[name] = this.defaultZone(name);
-      if (!this.zoneEls.has(name)) {
-        const z = el("div", "cv-zone");
-        z.dataset.zone = name;
-        const label = el("div", "cv-zone-label");
-        label.append(el("span", "cv-zone-name", name), el("span", "cv-zone-n"));
-        const handle = el("div", "cv-zone-resize");
-        z.append(label, handle);
-        this.zonesEl.append(z);
-        this.zoneEls.set(name, z);
-      }
-    }
-    for (const [name, z] of this.zoneEls) {
-      if (!names.has(name)) {
-        z.remove();
-        this.zoneEls.delete(name);
-      }
-    }
+  private get minimapOn() {
+    return this.api.local.get<boolean>(LOCAL_MINIMAP) ?? true;
   }
-
-  private defaultZone(name: string): Zone {
-    const rects: Rect[] = [];
-    for (const [key, v] of this.views) {
-      if (v.session.machine !== name) continue;
-      const r = this.absRect(key);
-      if (r) rects.push(r);
-    }
-    const b = bounds(rects);
-    const PAD = 40;
-    if (b) return { x: b.x - PAD, y: b.y - PAD - 8, w: b.w + PAD * 2, h: b.h + PAD * 2 + 8 };
-    const taken = [...this.visibleRects(), ...Object.values(this.layout.zones)];
-    const r = findFree(this.toWorld(this.size.w / 2, this.size.h / 2), 640, 420, taken, 80);
-    return { x: r.x, y: r.y, w: r.w, h: r.h };
-  }
-
-  private drawZones() {
-    if (!this.layout.zonesOn) return;
-    for (const [name, z] of this.zoneEls) {
-      const r = this.layout.zones[name];
-      if (!r) continue;
-      z.style.transform = `translate3d(${r.x}px, ${r.y}px, 0)`;
-      z.style.width = `${r.w}px`;
-      z.style.height = `${r.h}px`;
-      let n = 0;
-      for (const key of this.views.keys()) {
-        const wr = this.absRect(key);
-        if (
-          wr &&
-          wr.x + wr.w / 2 >= r.x &&
-          wr.x + wr.w / 2 <= r.x + r.w &&
-          wr.y + wr.h / 2 >= r.y &&
-          wr.y + wr.h / 2 <= r.y + r.h
-        )
-          n++;
-      }
-      const nEl = z.querySelector(".cv-zone-n") as HTMLElement;
-      setText(nEl, n ? String(n) : "");
-    }
-  }
-
-  private toggleZones() {
-    this.layout.zonesOn = !this.layout.zonesOn;
-    setClass(this.zonesBtn, "is-on", this.layout.zonesOn);
-    if (this.layout.zonesOn && Object.keys(this.layout.zones).length === 0) {
-      this.tidy();
-    } else {
-      this.renderZones();
-      this.dirtyAll = true;
-      this.request();
-      this.save();
-    }
-  }
-
-  // ---------- tray and shelf ----------
-
-  private renderTray(live: SessionSummary[]) {
-    const hidden = live.filter((s) => this.layout.windows[s.key]?.hidden);
-    this.tray.hidden = hidden.length === 0;
-    const sig = hidden.map((s) => `${s.key}:${s.state}`).join(",");
-    if (this.tray.dataset.sig === sig) return;
-    this.tray.dataset.sig = sig;
-    this.tray.replaceChildren(
-      el("span", "cv-tray-label", "hidden"),
-      ...hidden.map((s) => {
-        const b = el("button", "cv-chip", this.api.format.title(s));
-        b.type = "button";
-        b.dataset.state = s.state;
-        b.title = "Show again";
-        b.addEventListener("click", () => this.unhide(s.key));
-        return b;
-      }),
-    );
-  }
-
-  private renderShelf() {
-    const done = [...this.snapshot.sessions.values()]
-      .filter((s) => s.state === "done" && !s.parentId)
-      .sort((a, b) => (b.endedAt ?? b.lastAt).localeCompare(a.endedAt ?? a.lastAt))
-      .slice(0, SHELF_MAX);
-    this.shelf.hidden = done.length === 0;
-    const open = this.layout.shelfOpen;
-    setClass(this.root, "has-shelf", done.length > 0);
-    setClass(this.root, "shelf-open", done.length > 0 && open);
-    setClass(this.shelf, "is-open", open);
-    setText(this.shelfBtn, `Done · ${done.length}`);
-    this.shelfBtn.setAttribute("aria-expanded", String(open));
-    const now = Date.now();
-    const sig = `${open}|${done.map((s) => s.key).join(",")}`;
-    if (!open) {
-      this.shelfTiles.replaceChildren();
-      this.shelfTiles.dataset.sig = "";
-      return;
-    }
-    if (this.shelfTiles.dataset.sig === sig) return;
-    this.shelfTiles.dataset.sig = sig;
-    this.shelfTiles.replaceChildren(
-      ...done.map((s) => {
-        const t = el("button", "cv-tile");
-        t.type = "button";
-        t.title = "Open the session";
-        t.addEventListener("click", () => this.api.openSession(s.key));
-        const meta = [this.api.format.ago(s.endedAt ?? s.lastAt, now), this.api.format.repoBranch(s)].filter(Boolean);
-        t.append(el("span", "cv-tile-title", this.api.format.title(s)), el("span", "cv-tile-meta", meta.join(" · ")));
-        return t;
-      }),
-    );
-  }
-
-  // ---------- minimap ----------
 
   private drawMinimap() {
     const c = this.minimap;
+    const rects = this.contentRects();
+    const vpw = {
+      x: -this.view.x / this.view.k,
+      y: (this.barH - this.view.y) / this.view.k,
+      w: this.size.w / this.view.k,
+      h: (this.size.h - this.barH - STATUS_H) / this.view.k,
+    };
+    const all = bounds(rects);
+    const fits =
+      !all || (all.x >= vpw.x && all.y >= vpw.y && all.x + all.w <= vpw.x + vpw.w && all.y + all.h <= vpw.y + vpw.h);
+    const on = this.minimapOn && this.size.w >= MINIMAP_W && !fits;
+    c.hidden = !on;
+    if (!on) return;
     const dpr = Math.min(2, window.devicePixelRatio || 1);
     const W = c.clientWidth;
     const H = c.clientHeight;
@@ -873,42 +1293,24 @@ class Canvas implements InputHost {
     if (!ctx) return;
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.clearRect(0, 0, W, H);
-    const rects = this.visibleRects();
-    const vpw = {
-      x: -this.view.x / this.view.k,
-      y: -this.view.y / this.view.k,
-      w: this.size.w / this.view.k,
-      h: this.size.h / this.view.k,
-    };
-    const b = bounds([...rects, vpw]);
-    if (!b) return;
-    const pad = 20;
+    const b = bounds([...rects, vpw])!;
+    const pad = 10;
     const s = Math.min((W - pad * 2) / Math.max(1, b.w), (H - pad * 2) / Math.max(1, b.h));
     const ox = (W - b.w * s) / 2 - b.x * s;
     const oy = (H - b.h * s) / 2 - b.y * s;
-    // Hairline outlines only: windows in muted grey, a needs-you window in amber, the
-    // viewport a shade darker. Nothing is filled.
+    // Outlines only: windows in the mark tier, the viewport a step darker.
     const css = getComputedStyle(this.root);
-    const fg4 = css.getPropertyValue("--fg-4").trim() || "#888";
-    const needs = css.getPropertyValue("--needs").trim() || "#d9a441";
-    const line = css.getPropertyValue("--fg-3").trim() || "#666";
     ctx.lineWidth = 1;
-    const px = (v: number) => Math.round(v) + 0.5;
-    for (const [key, v] of this.views) {
-      const r = this.absRect(key);
-      if (!r) continue;
-      const needsYou = v.session.state === "needs_you";
-      ctx.strokeStyle = needsYou ? needs : fg4;
-      ctx.globalAlpha = needsYou || v.session.state === "working" ? 1 : 0.6;
+    ctx.strokeStyle = css.getPropertyValue("--fg-4").trim() || "#888";
+    for (const r of rects) {
       ctx.strokeRect(
-        px(ox + r.x * s),
-        px(oy + r.y * s),
+        Math.round(ox + r.x * s) + 0.5,
+        Math.round(oy + r.y * s) + 0.5,
         Math.max(2, Math.round(r.w * s)),
         Math.max(2, Math.round(r.h * s)),
       );
     }
-    ctx.globalAlpha = 1;
-    ctx.strokeStyle = line;
+    ctx.strokeStyle = css.getPropertyValue("--fg-3").trim() || "#666";
     ctx.strokeRect(
       Math.round(ox + vpw.x * s) + 0.5,
       Math.round(oy + vpw.y * s) + 0.5,
@@ -917,15 +1319,20 @@ class Canvas implements InputHost {
     );
     this.minimapMap = { s, ox, oy };
   }
-  private minimapMap: { s: number; ox: number; oy: number } | undefined;
 
-  private jumpFromMinimap(e: PointerEvent) {
+  private jumpFromMinimap(e: PointerEvent, animate = true) {
     const m = this.minimapMap;
     if (!m) return;
     const r = this.minimap.getBoundingClientRect();
     const wx = (e.clientX - r.left - m.ox) / m.s;
     const wy = (e.clientY - r.top - m.oy) / m.s;
-    this.animateTo({ x: this.size.w / 2 - wx * this.view.k, y: this.size.h / 2 - wy * this.view.k, k: this.view.k });
+    const to = { x: this.size.w / 2 - wx * this.view.k, y: this.size.h / 2 - wy * this.view.k, k: this.view.k };
+    if (animate) this.animateTo(to);
+    else {
+      this.tween = undefined;
+      this.view = to;
+      this.request();
+    }
   }
 
   // ---------- viewport ----------
@@ -934,183 +1341,51 @@ class Canvas implements InputHost {
     to.k = clamp(to.k, ZOOM_MIN, ZOOM_MAX);
     if (!this.motion) {
       this.view = to;
-      this.dirtyVp = true;
       this.request();
-      this.commit();
       return;
     }
-    this.tween = { from: { ...this.view }, to, t0: performance.now(), ms: 220 };
+    this.tween = { from: { ...this.view }, to, t0: performance.now(), ms: 240 };
     this.request();
   }
 
   fit(animate = true) {
-    const rects = this.visibleRects();
-    if (this.layout.zonesOn) rects.push(...Object.values(this.layout.zones));
-    if (this.mapOn) {
-      const lanes = this.map.laneBounds();
-      if (lanes) rects.push(lanes);
-      for (const n of this.map.nodes.values()) rects.push({ x: n.x, y: n.y, w: n.w, h: n.h });
-    }
-    const b = bounds(rects);
+    const b = bounds(this.contentRects());
+    const top = this.barH + (this.phone ? 12 : 24);
+    const bottom = STATUS_H + (this.phone ? 12 : 24);
     if (!b) {
-      this.animateTo({ x: this.size.w / 2, y: this.size.h / 2, k: 1 });
+      this.animateTo({ x: this.size.w / 2, y: top + 40, k: 1 });
       return;
     }
-    const pad = this.narrow ? 12 : 48;
-    const topPad = this.narrow ? 52 : 56; // under the HUD
-    const shelfH = this.shelf.hidden ? 0 : this.layout.shelfOpen ? 98 : 28;
-    const kw = (this.size.w - pad * 2) / b.w;
-    const kh = (this.size.h - topPad - pad - shelfH) / b.h;
-    const k = clamp(Math.min(kw, this.narrow ? 1 : kh, 1), ZOOM_MIN, ZOOM_MAX);
+    const side = this.phone ? 12 : 48;
+    const kw = (this.size.w - side * 2) / b.w;
+    const kh = (this.size.h - top - bottom) / b.h;
+    const k = clamp(Math.min(kw, this.phone ? 1 : kh, 1), ZOOM_MIN, ZOOM_MAX);
     const to = {
-      x: (this.size.w - b.w * k) / 2 - b.x * k,
-      y: this.narrow && kh < kw ? topPad - b.y * k : topPad + (this.size.h - topPad - shelfH - b.h * k) / 2 - b.y * k,
+      x: this.phone ? side - b.x * k : (this.size.w - b.w * k) / 2 - b.x * k,
+      y: this.phone || kh < kw ? top - b.y * k : top + (this.size.h - top - bottom - b.h * k) / 2 - b.y * k,
       k,
     };
+    if (this.phone && b.w * k < this.size.w - side * 2) to.x = (this.size.w - b.w * k) / 2 - b.x * k;
     if (animate) this.animateTo(to);
     else {
       this.view = to;
-      this.dirtyVp = true;
       this.request();
     }
   }
 
   private zoomTo(k: number) {
-    const cx = this.size.w / 2;
-    const cy = this.size.h / 2;
-    this.zoomAt(cx, cy, k / this.view.k);
-    this.commit();
+    this.animateTo(this.zoomedAround(this.size.w / 2, this.size.h / 2, k / (this.tween?.to ?? this.view).k));
   }
 
-  // ---------- actions ----------
-
-  tidy(animate = true) {
-    const sessions = [...this.snapshot.sessions.values()].filter((s) => this.views.has(s.key));
-    const r = tidy(sessions, (k) => this.pos(k), (this.layout.zonesOn || this.mapOn) && !this.narrow, this.narrow);
-    if (this.motion && animate) {
-      this.winsEl.classList.add("is-tidying");
-      setTimeout(() => this.winsEl.classList.remove("is-tidying"), 400);
-    }
-    for (const [key, p] of r.windows) {
-      const pos = this.pos(key);
-      pos.x = p.x;
-      pos.y = p.y;
-    }
-    if (this.layout.zonesOn) {
-      this.layout.zones = {};
-      for (const [name, z] of r.zones) this.layout.zones[name] = z;
-      this.renderZones();
-    }
-    if (this.mapOn) this.map.relayout();
-    this.dirtyAll = true;
-    this.request();
-    this.fit(animate);
-    this.save();
-    if (animate) this.say("tidied");
+  zoomStep(dir: 1 | -1) {
+    this.animateTo(this.zoomedAround(this.size.w / 2, this.size.h / 2, dir > 0 ? 1.25 : 0.8));
   }
 
-  reset() {
-    this.layout = emptyLayout();
-    for (const v of [...this.views.values()]) this.dropView(v);
-    setClass(this.zonesBtn, "is-on", false);
-    this.api.local.set(MAP_LOCAL_KEY, null);
-    this.applyMapOn();
-    this.view = { x: this.size.w / 2, y: this.size.h / 2, k: 1 };
-    this.sync(this.snapshot, true);
-    this.fit();
-    this.save();
-    this.say("layout reset");
-  }
-
-  private toggleExpandKey(key: SessionKey) {
-    const v = this.views.get(key);
-    const p = this.layout.windows[key];
-    if (!v || !p) return;
-    p.expanded = !p.expanded;
-    v.setExpanded(!!p.expanded);
-    this.focusWin(key);
-    this.dirtyWins.add(key);
-    this.request();
-    this.save();
-  }
-
-  private setQuery(q: string) {
-    this.query = q.trim().toLowerCase();
-    this.applySearch();
-    if (this.query) this.revealHit();
-  }
-
-  /** If no match is on screen, bring the first one into view. */
-  private revealHit() {
-    const vw = {
-      x: -this.view.x / this.view.k,
-      y: -this.view.y / this.view.k,
-      w: this.size.w / this.view.k,
-      h: this.size.h / this.view.k,
-    };
-    let first: Rect | null = null;
-    for (const v of this.views.values()) {
-      if (!v.el.classList.contains("is-hit")) continue;
-      const r = this.absRect(v.key);
-      if (!r) continue;
-      if (overlaps(r, vw, 0)) return;
-      first ??= r;
-    }
-    if (!first) return;
-    const k = this.view.k;
-    this.animateTo({
-      x: this.size.w / 2 - (first.x + first.w / 2) * k,
-      y: this.size.h / 2 - (first.y + first.h / 2) * k,
-      k,
-    });
-  }
-
-  private applySearch() {
-    const q = this.query;
-    setClass(this.root, "is-searching", !!q);
-    let hits = 0;
-    for (const v of this.views.values()) {
-      const s = v.session;
-      const hay = [
-        this.api.format.title(s),
-        s.repo,
-        s.branch,
-        s.machine,
-        s.harness,
-        s.model,
-        s.currentTool?.tool,
-        s.progress?.assistant,
-        s.lastAssistant,
-        s.lastUser,
-        s.openAttentions[0]?.message,
-      ]
-        .filter(Boolean)
-        .join(" ")
-        .toLowerCase();
-      const hit = !!q && hay.includes(q);
-      if (hit) hits++;
-      setClass(v.el, "is-hit", hit);
-      setClass(v.el, "is-dim", !!q && !hit);
-    }
-    if (q) this.say(hits === 1 ? "1 match" : `${hits} matches`);
-    else this.say("");
-  }
-
-  private say(text: string) {
-    setText(this.status, text);
-    this.status.hidden = !text;
-    if (text) {
-      clearTimeout(this.sayTimer);
-      this.sayTimer = setTimeout(() => {
-        if (!this.query) this.status.hidden = true;
-      }, 1800);
-    }
-  }
-  private sayTimer: ReturnType<typeof setTimeout> | undefined;
-
-  // ---------- InputHost ----------
-  get shortcuts(): ThemeApi["shortcuts"] {
-    return this.api.shortcuts;
+  private zoomedAround(sx: number, sy: number, factor: number): Viewport {
+    const v = this.tween?.to ?? this.view;
+    const k = clamp(v.k * factor, ZOOM_MIN, ZOOM_MAX);
+    const f = k / v.k;
+    return { x: sx - (sx - v.x) * f, y: sy - (sy - v.y) * f, k };
   }
 
   vp() {
@@ -1120,7 +1395,6 @@ class Canvas implements InputHost {
   panBy(dx: number, dy: number) {
     this.tween = undefined;
     this.view = { ...this.view, x: this.view.x + dx, y: this.view.y + dy };
-    this.dirtyVp = true;
     this.request();
   }
 
@@ -1129,34 +1403,1028 @@ class Canvas implements InputHost {
     const k = clamp(this.view.k * factor, ZOOM_MIN, ZOOM_MAX);
     const f = k / this.view.k;
     this.view = { x: sx - (sx - this.view.x) * f, y: sy - (sy - this.view.y) * f, k };
-    this.dirtyVp = true;
     this.request();
   }
 
-  zoomStep(dir: 1 | -1) {
-    this.animateTo(this.zoomedAround(this.size.w / 2, this.size.h / 2, dir > 0 ? 1.25 : 0.8));
+  commitViewport() {
+    this.saveVp();
   }
 
-  /** Where the view is heading: the tween's end while one runs, so repeated steps add up. */
-  private zoomedAround(sx: number, sy: number, factor: number): Viewport {
-    const v = this.tween?.to ?? this.view;
-    const k = clamp(v.k * factor, ZOOM_MIN, ZOOM_MAX);
-    const f = k / v.k;
-    return { x: sx - (sx - v.x) * f, y: sy - (sy - v.y) * f, k };
+  // ---------- actions ----------
+
+  /** Tidy: My layout's areas re-gridded inside, free windows on a grid to the right of
+   *  the areas, notes left where they are. On a phone it only re-fits (nothing stored). */
+  tidy() {
+    if (this.viewId !== "layout") {
+      this.fit();
+      return;
+    }
+    if (this.phone) {
+      this.relayout(true);
+      this.fit();
+      return;
+    }
+    const ops: Op[] = [];
+    const vis = [...this.wins.keys()];
+    let right = Number.NEGATIVE_INFINITY;
+    let top = Number.POSITIVE_INFINITY;
+    for (const [id, a] of Object.entries(this.doc.areas)) {
+      ops.push(this.tidyAreaOp(id, vis));
+      right = Math.max(right, a.x + a.w);
+      top = Math.min(top, a.y);
+    }
+    const free = vis.filter((k) => !areaOf(this.doc, k));
+    const sorted = free
+      .map((k) => this.snapshot.sessions.get(k)!)
+      .filter(Boolean)
+      .sort((a, b) => STATE_ORDER.indexOf(a.state) - STATE_ORDER.indexOf(b.state) || b.lastAt.localeCompare(a.lastAt));
+    const cells = sorted.map((s) => this.cell(s.key));
+    const out = new Map<string, { x: number; y: number }>();
+    const ox = Number.isFinite(right) ? right + GROUP_GAP : 0;
+    const oy = Number.isFinite(top) ? top : 0;
+    gridCells(
+      cells,
+      Math.max(colsFor(cells.reduce((n, c) => n + c.span, 0)), cells.some((c) => c.span === 2) ? 2 : 1),
+      out,
+      ox,
+      oy,
+    );
+    const set: Record<SessionKey, { x: number; y: number; expanded?: boolean }> = {};
+    for (const [k, p] of out) set[k] = { ...this.doc.windows[k], x: p.x, y: p.y };
+    ops.push({ t: "win", set });
+    this.commit({ t: "batch", ops });
+    this.animateLayout();
+    this.fit();
+    this.chrome.say("Tidied");
+  }
+
+  /** An area's members on the grid inside it: its width fixed, its height grown to fit. */
+  private tidyAreaOp(id: string, onCanvas: SessionKey[]): Op {
+    const a = this.doc.areas[id]!;
+    const members = onCanvas
+      .filter((k) => a.members[k])
+      .map((k) => this.snapshot.sessions.get(k)!)
+      .filter(Boolean)
+      .sort((p, q) => STATE_ORDER.indexOf(p.state) - STATE_ORDER.indexOf(q.state) || q.lastAt.localeCompare(p.lastAt));
+    const cols = Math.max(1, Math.floor((a.w - AREA_PAD * 2 + COL_GAP) / (WIN_W + COL_GAP)));
+    const cells = members.map((s) => this.cell(s.key));
+    const out = new Map<string, { x: number; y: number }>();
+    const { h } = gridCells(cells, cols, out, AREA_PAD, AREA_HEAD + 12);
+    const m: Record<SessionKey, { dx: number; dy: number }> = {};
+    for (const [k, p] of out) m[k] = { dx: p.x, dy: p.y };
+    const need = AREA_HEAD + 12 + h + AREA_PAD;
+    return { t: "areaPatch", id, patch: { h: Math.max(a.h, need, AREA_MIN_H) }, members: m };
+  }
+
+  private newArea(at?: { x: number; y: number }, rect?: Rect, members: SessionKey[] = []) {
+    if (!this.canArrange()) {
+      if (this.viewId !== "layout") this.setView("layout");
+      if (!this.canArrange()) return;
+    }
+    const id = newId("a");
+    const c = at ?? this.toWorld(this.size.w / 2, this.size.h / 2);
+    let r: Rect = rect ?? { x: Math.round(c.x - 240), y: Math.round(c.y - 140), w: 480, h: 280 };
+    if (!rect) {
+      const taken = [...this.contentRects()];
+      r = findFree({ x: r.x + r.w / 2, y: r.y + r.h / 2 }, r.w, r.h, taken, 24);
+    }
+    const area = {
+      title: "",
+      x: Math.round(r.x),
+      y: Math.round(r.y),
+      w: Math.max(AREA_MIN_W, Math.round(r.w)),
+      h: Math.max(AREA_MIN_H, Math.round(r.h)),
+      members: {} as Record<SessionKey, { dx: number; dy: number }>,
+      z: this.topZ(),
+    };
+    const ops: Op[] = [];
+    for (const k of members) {
+      const p = this.winRect(k);
+      if (!p) continue;
+      area.members[k] = { dx: Math.round(p.x - area.x), dy: Math.round(p.y - area.y) };
+      const prev = areaOf(this.doc, k);
+      if (prev) ops.push({ t: "areaPatch", id: prev, patch: {}, members: { [k]: null } });
+    }
+    this.commit({ t: "batch", ops: [...ops, { t: "area", id, set: area }] });
+    this.selection = new Set([`a:${id}`]);
+    void this.renameArea(id);
+  }
+
+  private topZ() {
+    let z = 0;
+    for (const a of Object.values(this.doc.areas)) z = Math.max(z, a.z);
+    for (const n of Object.values(this.doc.notes)) z = Math.max(z, n.z);
+    return z + 1;
+  }
+
+  private newNote(at?: { x: number; y: number }, text = "") {
+    if (this.viewId !== "layout") this.setView("layout");
+    const id = newId("n");
+    if (this.phone) {
+      // A phone may write a note's text, not its place: it lands beside the last one.
+      const last = Object.values(this.doc.notes).sort((a, b) => b.y - a.y)[0];
+      const note = {
+        text: text || " ",
+        x: last?.x ?? 0,
+        y: (last?.y ?? 0) + (last?.h ?? 0) + 16,
+        w: NOTE_W,
+        h: NOTE_H,
+        z: this.topZ(),
+      };
+      void this.writeRaw((cur) => {
+        const d = normalize(cur);
+        d.notes[id] = note;
+        return d;
+      });
+      exec(this.doc, { t: "note", id, set: note });
+      this.relayout(false);
+      if (!text) void this.editNote(id);
+      return;
+    }
+    const c = at ?? this.toWorld(this.size.w / 2, this.size.h / 2);
+    const r = findFree(c, NOTE_W, NOTE_H, this.contentRects(), 16);
+    this.commit({
+      t: "note",
+      id,
+      set: { text, x: Math.round(r.x), y: Math.round(r.y), w: NOTE_W, h: NOTE_H, z: this.topZ() },
+    });
+    this.selection = new Set([`n:${id}`]);
+    if (!text) void this.editNote(id);
+  }
+
+  addArea() {
+    this.newArea();
+  }
+
+  addNote() {
+    this.newNote();
+  }
+
+  private async renameArea(id: string) {
+    let v = this.areaViews.get(id);
+    if (!v) {
+      await new Promise((r) => requestAnimationFrame(r));
+      v = this.areaViews.get(id);
+    }
+    if (!v) return;
+    this.editing++;
+    const title = await v.rename();
+    this.editing--;
+    if (title !== null && this.doc.areas[id] && title !== this.doc.areas[id]!.title) {
+      this.commit({ t: "areaPatch", id, patch: { title } });
+    }
+    this.afterEdit();
+  }
+
+  private async editNote(id: string) {
+    let v = this.noteViews.get(id);
+    if (!v) {
+      await new Promise((r) => requestAnimationFrame(r));
+      v = this.noteViews.get(id);
+    }
+    if (!v) return;
+    this.editing++;
+    const text = await v.edit();
+    this.editing--;
+    const n = this.doc.notes[id];
+    if (n && text !== null) {
+      if (!text.trim()) {
+        // An empty note is no note.
+        this.commit({ t: "note", id, set: null }, { undo: false });
+        this.undoStack = this.undoStack.filter((o) => !(o.t === "note" && o.id === id));
+      } else if (text !== n.text) {
+        if (text.length > NOTE_MAX) this.chrome.say("A note holds up to 2,000 characters");
+        else this.commitText(id, text);
+      }
+    } else if (n && !n.text.trim()) {
+      this.commit({ t: "note", id, set: null }, { undo: false });
+    }
+    this.afterEdit();
+  }
+
+  /** A note's text: on a phone too (text is not a position). */
+  private commitText(id: string, text: string) {
+    if (!this.phone) {
+      this.commit({ t: "notePatch", id, patch: { text } });
+      return;
+    }
+    exec(this.doc, { t: "notePatch", id, patch: { text } });
+    this.write({ t: "notePatch", id, patch: { text } });
+  }
+
+  private afterEdit() {
+    this.root.focus({ preventScroll: true });
+    if (this.pendingRemote && !this.gesture && this.editing === 0) this.adopt(this.pendingRemote.v);
+  }
+
+  private deleteSelection() {
+    if (this.viewId === "map") {
+      this.map.deleteSelected();
+      return;
+    }
+    const areas = [...this.selection].filter((i) => i.startsWith("a:")).map((i) => i.slice(2));
+    const notes = [...this.selection].filter((i) => i.startsWith("n:")).map((i) => i.slice(2));
+    if (areas.length || notes.length) {
+      const ops: Op[] = [
+        ...areas.map((id): Op => ({ t: "area", id, set: null })),
+        ...notes.map((id): Op => ({ t: "note", id, set: null })),
+      ];
+      // An area's windows stay where they are.
+      for (const id of areas) {
+        const a = this.doc.areas[id];
+        if (!a) continue;
+        const set: Record<SessionKey, { x: number; y: number }> = {};
+        for (const [k, m] of Object.entries(a.members))
+          set[k] = { ...this.doc.windows[k], x: a.x + m.dx, y: a.y + m.dy };
+        ops.unshift({ t: "win", set });
+      }
+      const what =
+        areas.length && notes.length
+          ? "Deleted"
+          : areas.length
+            ? areas.length === 1
+              ? "Area deleted"
+              : `${areas.length} areas deleted`
+            : notes.length === 1
+              ? "Note deleted"
+              : `${notes.length} notes deleted`;
+      this.selection.clear();
+      this.commit({ t: "batch", ops }, { say: what });
+      return;
+    }
+    const keys = this.selectedKeys();
+    if (keys.length) this.hide(keys);
+  }
+
+  private hide(keys: SessionKey[]) {
+    const set: Record<SessionKey, SessionState> = {};
+    for (const k of keys) {
+      const s = this.snapshot.sessions.get(k);
+      if (s) set[k] = s.state;
+    }
+    for (const k of keys) this.selection.delete(`w:${k}`);
+    this.commit(
+      { t: "hidden", set },
+      { say: keys.length === 1 ? "Hidden until it changes" : `${keys.length} hidden until they change` },
+    );
+    this.sync(this.snapshot);
+  }
+
+  private unhide(key: SessionKey) {
+    this.commit({ t: "hidden", set: { [key]: null } }, { undo: false });
+    this.sync(this.snapshot);
+    this.selection = new Set([`w:${key}`]);
+    this.reveal(key);
+  }
+
+  /** Bring a window into view when it's off screen. */
+  private reveal(key: SessionKey) {
+    const r = this.winRect(key);
+    if (!r) return;
+    const k = this.view.k;
+    const s = this.toScreen(r.x, r.y);
+    if (s.x >= 0 && s.y >= this.barH && s.x + r.w * k <= this.size.w && s.y + r.h * k <= this.size.h - STATUS_H) return;
+    this.animateTo({ x: this.size.w / 2 - (r.x + r.w / 2) * k, y: this.size.h / 2 - (r.y + r.h / 2) * k, k });
+  }
+
+  private toggleExpand(key: SessionKey) {
+    const v = this.wins.get(key);
+    if (!v || this.viewId === "map") return;
+    const on = !this.isExpanded(key);
+    if (this.canArrange()) {
+      const cur = this.doc.windows[key] ?? this.minePos(key) ?? { x: 0, y: 0 };
+      const next: WinEntry = { ...cur, x: cur.x, y: cur.y, expanded: on || undefined };
+      if (!on) {
+        delete next.w;
+        delete next.h;
+      }
+      if (!next.expanded) delete next.expanded;
+      this.commit({ t: "win", set: { [key]: next } }, { undo: false });
+    } else if (on) this.expandedHere.add(key);
+    else this.expandedHere.delete(key);
+    v.setExpanded(on);
+    this.layoutSig = "";
+    this.sync(this.snapshot);
+    v.el.focus({ preventScroll: true });
+  }
+
+  private openBeside(key: SessionKey, background = false) {
+    const v = this.wins.get(key);
+    const r = v?.el.getBoundingClientRect();
+    this.api.openSession(
+      key,
+      r
+        ? { split: true, background, from: { x: r.x, y: r.y, width: r.width, height: r.height } }
+        : { split: true, background },
+    );
+  }
+
+  /** A pill: its child session when it has one, else the agent inside its parent. */
+  private openAgent(id: string, asPage = false) {
+    const p = this.pills.get(id);
+    if (!p) return;
+    const a = p.agent;
+    if (a.session) {
+      this.api.openSession(a.session, asPage || this.phone ? {} : { split: true });
+      return;
+    }
+    this.api.openSession(p.parent, asPage || this.phone ? { agent: a.id } : { split: true, agent: a.id });
+  }
+
+  private selectedKeys(): SessionKey[] {
+    return [...this.selection].filter((i) => i.startsWith("w:")).map((i) => i.slice(2));
+  }
+
+  /** ⌥⌘1–7, ⌥⌘0: sessions through the host's labels, areas and notes in the document. */
+  private setLabel(c: LabelColor | null) {
+    const keys = this.selectedKeys();
+    const focused = this.focusedKey();
+    if (!keys.length && focused && !this.selection.size) keys.push(focused);
+    if (keys.length) void this.api.labels?.set(keys, c);
+    const ops: Op[] = [];
+    for (const i of this.selection) {
+      if (i.startsWith("a:")) ops.push({ t: "areaPatch", id: i.slice(2), patch: { label: c } });
+      if (i.startsWith("n:")) ops.push({ t: "notePatch", id: i.slice(2), patch: { label: c } });
+    }
+    if (ops.length) this.commit({ t: "batch", ops });
+  }
+
+  private focusedKey(): SessionKey | undefined {
+    const a = document.activeElement as HTMLElement | null;
+    return (a?.closest(".cv-win") as HTMLElement | null)?.dataset.key;
+  }
+
+  private enter() {
+    const items = [...this.selection];
+    const one = items.length === 1 ? items[0]! : undefined;
+    const focused = this.focusedKey();
+    if (one?.startsWith("a:")) void this.renameArea(one.slice(2));
+    else if (one?.startsWith("n:")) void this.editNote(one.slice(2));
+    else if (one?.startsWith("p:")) this.openAgent(one.slice(2));
+    else if (one?.startsWith("w:")) this.toggleExpand(one.slice(2));
+    else if (focused) this.toggleExpand(focused);
+  }
+
+  private nudge(dx: number, dy: number) {
+    if (!this.canArrange() || !this.selection.size) return;
+    const first = [...this.selection].find((i) => !i.startsWith("p:"));
+    if (!first) return;
+    if (!this.moving) {
+      if (!this.beginMove(first)) return;
+      this.nudged = { dx: 0, dy: 0 };
+    }
+    this.nudged!.dx += dx;
+    this.nudged!.dy += dy;
+    this.moveBy(this.nudged!.dx, this.nudged!.dy, false);
+    this.endNudge();
+  }
+  private nudged: { dx: number; dy: number } | undefined;
+  private endNudge = debounce(500, () => {
+    this.nudged = undefined;
+    this.endMove(true);
+  });
+
+  // ---------- search ----------
+
+  setQuery(q: string) {
+    this.query = q.trim().toLowerCase();
+    this.applySearch();
+    if (this.query) this.revealHit();
+  }
+
+  private applySearch() {
+    const q = parseQuery(this.query);
+    setClass(this.root, "is-searching", !!this.query);
+    let hits = 0;
+    for (const v of this.wins.values()) {
+      const hit = !!this.query && this.matches(v.session, q);
+      if (hit) hits++;
+      setClass(v.el, "is-hit", hit);
+      setClass(v.el, "is-dim", !!this.query && !hit);
+    }
+    if (this.query) this.chrome.say(hits === 1 ? "1 match" : `${hits} matches`, undefined, true);
+    else if (this.wasSearching) this.chrome.say("");
+    this.wasSearching = !!this.query;
+  }
+  private wasSearching = false;
+
+  private matches(s: SessionSummary, q: ReturnType<typeof parseQuery>): boolean {
+    const l = this.snapshot.labels;
+    const color = l?.sessions.get(s.key);
+    const labelIs = (x: string) =>
+      x === "none" ? !color : !!color && (color === x || (l?.names[color] ?? "").toLowerCase() === x);
+    for (const t of q.tokens) {
+      let ok = true;
+      if (t.k === "label") ok = labelIs(t.v);
+      else if (t.k === "machine") ok = (s.machine ?? "").toLowerCase().includes(t.v);
+      else if (t.k === "harness")
+        ok = s.harness.toLowerCase().includes(t.v) || harnessName(this.api, s.harness).toLowerCase().includes(t.v);
+      else if (t.k === "repo") ok = (s.repo ?? "").toLowerCase().includes(t.v);
+      if (ok === t.neg) return false;
+    }
+    if (!q.text) return true;
+    const hay = [
+      this.api.format.title(s),
+      s.repo,
+      s.branch,
+      s.machine,
+      s.harness,
+      s.model,
+      s.currentTool?.tool,
+      s.progress?.assistant,
+      s.lastAssistant,
+      s.lastUser,
+      s.openAttentions[0]?.message,
+      ...(s.agents ?? []).flatMap((a) => [a.type, a.description]),
+    ]
+      .filter(Boolean)
+      .join(" ")
+      .toLowerCase();
+    return hay.includes(q.text);
+  }
+
+  /** If no match is on screen, bring the first one into view. */
+  private revealHit() {
+    const k = this.view.k;
+    const vw = { x: -this.view.x / k, y: -this.view.y / k, w: this.size.w / k, h: this.size.h / k };
+    let first: Rect | null = null;
+    for (const v of this.wins.values()) {
+      if (!v.el.classList.contains("is-hit")) continue;
+      const r = this.winRect(v.key);
+      if (!r) continue;
+      if (overlaps(r, vw, 0)) return;
+      first ??= r;
+    }
+    if (!first) return;
+    this.animateTo({
+      x: this.size.w / 2 - (first.x + first.w / 2) * k,
+      y: this.size.h / 2 - (first.y + first.h / 2) * k,
+      k,
+    });
+  }
+
+  // ---------- menus ----------
+
+  private at(sx: number, sy: number) {
+    const r = this.root.getBoundingClientRect();
+    return { x: r.left + sx, y: r.top + sy };
+  }
+
+  private open(
+    items: ViewMenuItem[],
+    at: { x: number; y: number },
+    source: MenuSource,
+    title?: string,
+    subtitle?: string,
+  ) {
+    this.hideTip();
+    this.api.menu?.open(items, at, { source, title, subtitle });
+  }
+
+  /** The Label ▸ rows: the seven with their names and keys, None; checked when every
+   *  target shares it. */
+  private labelItems(
+    current: LabelColor | null | undefined,
+    run: (c: LabelColor | null) => void,
+    edit = true,
+  ): ViewMenuItem[] {
+    const names = this.snapshot.labels?.names;
+    const rows: ViewMenuItem[] = LABEL_COLORS.map((c) => ({
+      label: names?.[c] ?? c[0]!.toUpperCase() + c.slice(1),
+      swatch: c,
+      radio: true,
+      checked: current === c,
+      action: `label.${c}`,
+      run: () => run(c),
+    }));
+    rows.push(
+      { sep: true },
+      { label: "None", radio: true, checked: current === null, action: "label.none", run: () => run(null) },
+    );
+    if (edit && this.api.labels)
+      rows.push({ sep: true }, { label: "Edit labels…", run: () => this.api.labels?.edit(current ?? undefined) });
+    return rows;
+  }
+
+  menuAt(hit: Hit, sx: number, sy: number, source: MenuSource) {
+    if (!this.api.menu) return;
+    const at = this.at(sx, sy);
+    switch (hit.kind) {
+      case "win": {
+        const item = `w:${hit.key}`;
+        if (this.selection.size > 1 && this.selection.has(item)) this.selectionMenu(at, source);
+        else {
+          if (!this.selection.has(item)) this.selection = new Set([item]);
+          this.request();
+          this.windowMenu(hit.key, at, source);
+        }
+        return;
+      }
+      case "pill":
+        this.selection = new Set([`p:${hit.id}`]);
+        this.request();
+        this.pillMenu(hit.id, at, source);
+        return;
+      case "area":
+        if (this.selection.size > 1 && this.selection.has(`a:${hit.id}`)) return this.selectionMenu(at, source);
+        this.selection = new Set([`a:${hit.id}`]);
+        this.request();
+        this.areaMenu(hit.id, at, source);
+        return;
+      case "note":
+        this.selection = new Set([`n:${hit.id}`]);
+        this.request();
+        this.noteMenu(hit.id, at, source);
+        return;
+      case "head":
+        this.headMenu(hit.group, at, source);
+        return;
+      case "node":
+        if (hit.custom) {
+          this.map.select(hit.id);
+          this.open(
+            [
+              { label: "Rename", keys: "↵", run: () => this.map.edit(hit.id) },
+              { sep: true },
+              { label: "Delete", keys: "⌫", danger: true, run: () => void this.map.deleteSelected() },
+            ],
+            at,
+            source,
+          );
+          return;
+        }
+        this.groundMenu(at, source, sx, sy);
+        return;
+      case "link":
+        this.map.select(hit.id);
+        this.open(
+          [{ label: "Delete line", keys: "⌫", danger: true, run: () => void this.map.deleteSelected() }],
+          at,
+          source,
+        );
+        return;
+      default:
+        this.groundMenu(at, source, sx, sy);
+    }
+  }
+
+  menuForSelection(): void {
+    const items = [...this.selection];
+    const first = items[0];
+    const r = !first
+      ? null
+      : first.startsWith("w:")
+        ? this.winRect(first.slice(2))
+        : first.startsWith("a:")
+          ? this.areaRect(first.slice(2))
+          : first.startsWith("n:")
+            ? this.noteRect(first.slice(2))
+            : null;
+    const focused = this.focusedKey();
+    if (!first && focused) {
+      this.selection = new Set([`w:${focused}`]);
+      this.menuForSelection();
+      return;
+    }
+    if (!first) {
+      this.groundMenu(this.at(16, this.barH + 8), "keyboard", this.size.w / 2, this.size.h / 2);
+      return;
+    }
+    const pr = first.startsWith("p:")
+      ? this.pillRects(this.pills.get(first.slice(2))?.parent ?? "").pills.find(([id]) => id === first.slice(2))?.[1]
+      : null;
+    const box = r ?? pr;
+    const s = box ? this.toScreen(box.x, box.y) : { x: 16, y: this.barH + 8 };
+    const at = this.at(s.x, s.y);
+    if (items.length > 1) {
+      this.selectionMenu(at, "keyboard");
+      return;
+    }
+    if (first.startsWith("w:")) this.windowMenu(first.slice(2), at, "keyboard");
+    else if (first.startsWith("p:")) this.pillMenu(first.slice(2), at, "keyboard");
+    else if (first.startsWith("a:")) this.areaMenu(first.slice(2), at, "keyboard");
+    else if (first.startsWith("n:")) this.noteMenu(first.slice(2), at, "keyboard");
+  }
+
+  /** The board's menu for the session, with the canvas's own rows. */
+  private windowMenu(key: SessionKey, at: { x: number; y: number }, source: MenuSource) {
+    const s = this.snapshot.sessions.get(key);
+    const v = this.wins.get(key);
+    if (!s || !v || !this.api.menu) return;
+    const answer: ViewMenuItem[] | undefined = v.answerable
+      ? [
+          { label: "Allow", run: () => void v.answer("allow") },
+          { label: "Deny", run: () => void v.answer("deny") },
+        ]
+      : undefined;
+    const extra: ViewMenuItem[] = [];
+    if (this.viewId !== "map")
+      extra.push({
+        label: this.isExpanded(key) ? "Collapse" : "Expand",
+        action: "enter",
+        run: () => this.toggleExpand(key),
+      });
+    const parentKey = s.parentId ? `${s.harness}:${s.parentId}` : undefined;
+    if (parentKey && this.wins.has(parentKey))
+      extra.push({ label: "Select parent", run: () => this.selectOnly(`w:${parentKey}`) });
+    extra.push({ label: "Hide until it changes", run: () => this.hide([key]) });
+    const aid = areaOf(this.doc, key);
+    if (this.canArrange() && aid) extra.push({ label: "Remove from area", run: () => this.removeFromArea([key]) });
+    this.hideTip();
+    this.api.menu.session(key, at, { answer, extra, source });
+  }
+
+  private selectionMenu(at: { x: number; y: number }, source: MenuSource) {
+    const keys = this.selectedKeys();
+    const items: ViewMenuItem[] = [];
+    if (keys.length) {
+      const labels = keys.map((k) => this.snapshot.labels?.sessions.get(k) ?? null);
+      const same = labels.every((l) => l === labels[0]) ? labels[0] : undefined;
+      items.push({ label: "Label", items: this.labelItems(same, (c) => void this.api.labels?.set(keys, c)) });
+    }
+    const docItems = [...this.selection].filter((i) => i.startsWith("a:") || i.startsWith("n:"));
+    if (docItems.length && !keys.length)
+      items.push({ label: "Label", items: this.labelItems(undefined, (c) => this.setLabel(c), false) });
+    if (this.canArrange() && keys.length)
+      items.push({ label: "New area from selection", run: () => this.areaFromSelection() });
+    if (keys.length) {
+      items.push({ label: "Hide until they change", run: () => this.hide(keys) });
+      items.push({ sep: true });
+      items.push({
+        label: "Open beside",
+        run: () =>
+          keys.forEach((k, i) => {
+            this.openBeside(k, i < keys.length - 1);
+          }),
+      });
+    }
+    if (docItems.length)
+      items.push({ sep: true }, { label: "Delete", keys: "⌫", danger: true, run: () => this.deleteSelection() });
+    this.open(items, at, source, `${this.selection.size} selected`);
+  }
+
+  private areaFromSelection() {
+    const keys = this.selectedKeys();
+    const rects = keys.map((k) => {
+      const r = this.winRect(k)!;
+      return this.footprint(k, r.x, r.y);
+    });
+    const b = bounds(rects);
+    if (!b) return;
+    this.newArea(
+      undefined,
+      { x: b.x - AREA_PAD, y: b.y - AREA_PAD - AREA_HEAD, w: b.w + AREA_PAD * 2, h: b.h + AREA_PAD * 2 + AREA_HEAD },
+      keys,
+    );
+  }
+
+  private removeFromArea(keys: SessionKey[]) {
+    const ops: Op[] = [];
+    for (const k of keys) {
+      const aid = areaOf(this.doc, k);
+      const p = this.winRect(k);
+      if (!aid || !p) continue;
+      ops.push({ t: "areaPatch", id: aid, patch: {}, members: { [k]: null } });
+      // Out of the area, just right of it.
+      const a = this.doc.areas[aid]!;
+      ops.push({
+        t: "win",
+        set: { [k]: { ...this.doc.windows[k], x: Math.round(a.x + a.w + GROUP_GAP), y: Math.round(p.y) } },
+      });
+    }
+    this.commit({ t: "batch", ops });
+  }
+
+  private pillMenu(id: string, at: { x: number; y: number }, source: MenuSource) {
+    const p = this.pills.get(id);
+    if (!p) return;
+    const a: AgentRun = p.agent;
+    const copy = (text: string) => () => void navigator.clipboard?.writeText(text).catch(() => {});
+    const copies: ViewMenuItem[] = [{ label: "Agent ID", run: copy(a.id) }];
+    if (a.description) copies.push({ label: "Description", run: copy(a.description) });
+    if (a.result) copies.push({ label: "Result", run: copy(a.result) });
+    const title = [a.type, a.description].filter(Boolean).join(" · ") || "Subagent";
+    const parent = this.snapshot.sessions.get(p.parent);
+    this.open(
+      [
+        { label: "Open beside", action: "enter", run: () => this.openAgent(id) },
+        { label: "Open as page", run: () => this.openAgent(id, true) },
+        { sep: true },
+        { label: "Select parent", run: () => this.selectOnly(`w:${p.parent}`) },
+        { sep: true },
+        { label: "Copy", items: copies },
+      ],
+      at,
+      source,
+      title,
+      parent ? this.api.format.title(parent) : undefined,
+    );
+  }
+
+  private areaMenu(id: string, at: { x: number; y: number }, source: MenuSource) {
+    const a = this.doc.areas[id];
+    if (!a) return;
+    const arrange = this.canArrange();
+    this.open(
+      [
+        { label: "Rename", action: "enter", run: () => void this.renameArea(id) },
+        {
+          label: "Label",
+          items: this.labelItems(
+            a.label ?? null,
+            (c) => this.commit({ t: "areaPatch", id, patch: { label: c } }),
+            false,
+          ),
+        },
+        {
+          label: "Tidy this area",
+          disabled: !arrange,
+          run: () => this.commit(this.tidyAreaOp(id, [...this.wins.keys()])),
+        },
+        {
+          label: "Select members",
+          run: () => {
+            this.selection = new Set(
+              Object.keys(a.members)
+                .filter((k) => this.wins.has(k))
+                .map((k) => `w:${k}`),
+            );
+            this.request();
+          },
+        },
+        { sep: true },
+        { label: "Delete area", action: "delete", danger: true, run: () => this.selectThenDelete(`a:${id}`) },
+      ],
+      at,
+      source,
+      a.title || "Untitled area",
+    );
+  }
+
+  private noteMenu(id: string, at: { x: number; y: number }, source: MenuSource) {
+    const n = this.doc.notes[id];
+    if (!n) return;
+    this.open(
+      [
+        { label: "Edit", action: "enter", run: () => void this.editNote(id) },
+        {
+          label: "Label",
+          items: this.labelItems(
+            n.label ?? null,
+            (c) => this.commit({ t: "notePatch", id, patch: { label: c } }),
+            false,
+          ),
+        },
+        { label: "Copy text", run: () => void navigator.clipboard?.writeText(n.text).catch(() => {}) },
+        { sep: true },
+        { label: "Delete note", action: "delete", danger: true, run: () => this.selectThenDelete(`n:${id}`) },
+      ],
+      at,
+      source,
+      "Note",
+    );
+  }
+
+  private selectThenDelete(item: string) {
+    this.selection = new Set([item]);
+    this.deleteSelection();
+  }
+
+  private headMenu(group: string, at: { x: number; y: number }, source: MenuSource) {
+    const h = this.heads.find((x) => x.id === group);
+    if (!h) return;
+    const keys = h.keys.filter((k) => this.wins.has(k));
+    const items: ViewMenuItem[] = [
+      {
+        label: "Select group",
+        run: () => {
+          this.selection = new Set(keys.map((k) => `w:${k}`));
+          this.request();
+        },
+      },
+    ];
+    if (keys.length <= 6)
+      items.push({
+        label: "Open all beside",
+        run: () =>
+          keys.forEach((k, i) => {
+            this.openBeside(k, i < keys.length - 1);
+          }),
+      });
+    if (this.viewId === "label" && this.api.labels)
+      items.push({ sep: true }, { label: "Edit labels…", run: () => this.api.labels?.edit(h.label) });
+    this.open(items, at, source, h.title);
+  }
+
+  private viewItems(): ViewMenuItem[] {
+    return VIEWS.map((v) => ({
+      label: v.label,
+      radio: true,
+      checked: v.id === this.viewId,
+      action: `view.${v.id}`,
+      run: () => this.setView(v.id),
+    }));
+  }
+
+  private groundMenu(at: { x: number; y: number }, source: MenuSource, sx: number, sy: number) {
+    const w = this.toWorld(sx, sy);
+    let items: ViewMenuItem[];
+    if (this.viewId === "layout") {
+      items = [
+        {
+          label: "New area",
+          action: "area",
+          disabled: this.phone ? "Arrange on a larger screen" : false,
+          run: () => this.newArea(w),
+        },
+        { label: "New note", action: "note", run: () => this.newNote(w) },
+        { label: "Tidy", action: "tidy", run: () => this.tidy() },
+        { label: "Fit", action: "fit", run: () => this.fit() },
+        {
+          label: "Paste note",
+          run: async () => {
+            const t = await navigator.clipboard?.readText().catch(() => "");
+            if (t?.trim()) this.newNote(w, t.slice(0, NOTE_MAX));
+            else this.chrome.say("Nothing to paste");
+          },
+        },
+        { sep: true },
+        { label: "Reset My layout…", danger: true, disabled: this.phone, run: () => void this.reset() },
+      ];
+    } else if (this.viewId === "map") {
+      items = [
+        {
+          label: "New node",
+          run: () => {
+            this.map.addCustom(Math.round(w.x / GRID) * GRID, Math.round(w.y / GRID) * GRID);
+          },
+        },
+        { label: "Fit", action: "fit", run: () => this.fit() },
+      ];
+    } else {
+      items = [
+        { label: "View", items: this.viewItems() },
+        { label: "Fit", action: "fit", run: () => this.fit() },
+        { label: "Show done sessions", checked: this.showDoneSessions, run: () => this.toggleShowDone() },
+      ];
+    }
+    this.open(items, at, source);
+  }
+
+  viewMenu(at: { x: number; y: number }) {
+    this.open(this.viewItems(), at, "mouse");
+  }
+
+  zoomMenu(at: { x: number; y: number }) {
+    this.open(
+      [
+        { label: "Zoom in", action: "zoom-in", run: () => this.zoomStep(1) },
+        { label: "Zoom out", action: "zoom-out", run: () => this.zoomStep(-1) },
+        { label: "Actual size", action: "zoom-actual", run: () => this.zoomTo(1) },
+        { label: "Fit", action: "fit", run: () => this.fit() },
+      ],
+      at,
+      "mouse",
+    );
+  }
+
+  moreMenu(at: { x: number; y: number }) {
+    const items: ViewMenuItem[] = [];
+    if (this.phone && this.viewId === "layout") {
+      items.push({ label: "New note", run: () => this.newNote() }, { sep: true });
+    }
+    items.push(
+      { label: "Show done sessions", checked: this.showDoneSessions, run: () => this.toggleShowDone() },
+      {
+        label: "Show minimap",
+        checked: this.minimapOn,
+        disabled: this.size.w < MINIMAP_W ? "Only on a wider window" : false,
+        run: () => {
+          this.api.local.set(LOCAL_MINIMAP, !this.minimapOn);
+          this.request();
+        },
+      },
+    );
+    if (this.api.labels) items.push({ sep: true }, { label: "Edit labels…", run: () => this.api.labels?.edit() });
+    if (this.viewId === "layout" && !this.phone)
+      items.push({ sep: true }, { label: "Reset My layout…", danger: true, run: () => void this.reset() });
+    this.open(items, at, "mouse");
+  }
+
+  hiddenMenu(at: { x: number; y: number }) {
+    this.open(
+      this.hiddenList.map((s) => ({
+        label: this.api.format.title(s),
+        items: [
+          { label: "Show", run: () => this.unhide(s.key) },
+          { label: "Open beside", run: () => this.openBeside(s.key) },
+        ],
+      })),
+      at,
+      "mouse",
+      "Hidden",
+    );
+  }
+
+  doneMenu(at: { x: number; y: number }) {
+    this.open(
+      this.doneList.map((s) => ({
+        label: this.api.format.title(s),
+        items: [
+          { label: "Open beside", run: () => this.openBeside(s.key) },
+          { label: "Open as page", run: () => this.api.openSession(s.key) },
+        ],
+      })),
+      at,
+      "mouse",
+      "Done",
+    );
+  }
+
+  pair() {
+    this.api.navigate("/machines");
+  }
+
+  private toggleShowDone() {
+    this.api.local.set(LOCAL_DONE, !this.showDoneSessions);
+    this.layoutSig = "";
+    this.sync(this.snapshot);
+  }
+
+  private async reset() {
+    const ok = this.api.menu
+      ? await this.api.menu.confirm({
+          title: "Reset My layout?",
+          body: "Window positions, areas and notes go. Sessions stay.",
+          action: "Reset",
+          danger: true,
+        })
+      : false;
+    if (!ok) return;
+    this.commit({ t: "restore", windows: {}, areas: {}, notes: {} }, { say: "My layout reset" });
+    this.layoutSig = "";
+    this.sync(this.snapshot);
+    this.fit();
+  }
+
+  // ---------- the tooltip ----------
+
+  private tipOver(e: PointerEvent) {
+    const bar = (e.target as Element | null)?.closest?.(".cv-win-bar");
+    clearTimeout(this.tipTimer);
+    if (!bar || e.pointerType !== "mouse" || this.root.classList.contains("is-touch")) {
+      this.tip.hidden = true;
+      return;
+    }
+    const key = (bar.closest(".cv-win") as HTMLElement).dataset.key!;
+    this.tipTimer = setTimeout(() => {
+      const v = this.wins.get(key);
+      if (!v || this.gesture) return;
+      this.tip.replaceChildren(...v.tipLines().map((l, i) => el("div", i ? "cv-tip-l" : "cv-tip-t", l)));
+      const r = bar.getBoundingClientRect();
+      const root = this.root.getBoundingClientRect();
+      this.tip.hidden = false;
+      const x = Math.min(r.left - root.left, this.size.w - this.tip.offsetWidth - 8);
+      const below = r.bottom - root.top + 6;
+      const y =
+        below + this.tip.offsetHeight > this.size.h - STATUS_H ? r.top - root.top - this.tip.offsetHeight - 6 : below;
+      this.tip.style.transform = `translate3d(${Math.max(8, x)}px, ${y}px, 0)`;
+    }, 500);
+  }
+
+  private hideTip() {
+    clearTimeout(this.tipTimer);
+    this.tip.hidden = true;
+  }
+
+  // ---------- InputHost ----------
+
+  get shortcuts(): ThemeApi["shortcuts"] {
+    return this.api.shortcuts;
   }
 
   hit(target: EventTarget | null): Hit {
     const t = target as Element | null;
     if (!t || !(t instanceof Element)) return { kind: "canvas" };
-    if (t.closest(".cv-hud, .cv-tray, .cv-shelf, .cv-minimap, .cv-status, .cv-legend")) return { kind: "ui" };
+    if (t.closest(".cv-bar, .cv-statusbar, .cv-minimap, .cv-pop, .cv-ghost, .cv-tip, .cv-pill-more"))
+      return { kind: "ui" };
     const win = t.closest(".cv-win") as HTMLElement | null;
     if (win) {
       const key = win.dataset.key!;
-      if (t.closest("button, a, input")) return { kind: "win", key, part: "control" };
+      if (t.closest("button, a, input, select, textarea")) return { kind: "win", key, part: "control" };
       if (t.closest(".cv-win-resize")) return { kind: "win", key, part: "resize" };
       if (t.closest(".cv-detail-list")) return { kind: "win", key, part: "scroll" };
       if (t.closest(".cv-win-bar")) return { kind: "win", key, part: "bar" };
       return { kind: "win", key, part: "body" };
+    }
+    const pill = t.closest(".cv-pill") as HTMLElement | null;
+    if (pill) return { kind: "pill", id: pill.dataset.pill!, parent: pill.dataset.parent!, agent: pill.dataset.agent! };
+    const note = t.closest(".cv-note") as HTMLElement | null;
+    if (note) {
+      const id = note.dataset.note!;
+      if (t.closest(".cv-note-resize")) return { kind: "note", id, part: "resize" };
+      if (t.closest(".cv-note-text.is-editing")) return { kind: "note", id, part: "edit" };
+      return { kind: "note", id, part: "body" };
     }
     const node = t.closest(".cv-node") as HTMLElement | null;
     if (node) {
@@ -1166,206 +2434,410 @@ class Canvas implements InputHost {
       const chip = t.closest(".cv-chip-a") as HTMLElement | null;
       if (chip) return { kind: "node", id, part: "chip", chip: chip.dataset.chip, custom };
       if (t.closest(".cv-node-edit[contenteditable='true']")) return { kind: "node", id, part: "edit", custom };
+      if (node.dataset.chip) return { kind: "node", id, part: "chip", chip: node.dataset.chip, custom };
       return { kind: "node", id, part: "body", custom };
     }
     const link = t.closest("[data-link]") as (SVGElement & { dataset: DOMStringMap }) | null;
     if (link?.dataset.link) return { kind: "link", id: link.dataset.link };
-    if (t.closest(".cv-pop, .cv-ghost")) return { kind: "ui" };
-    const zone = t.closest(".cv-zone") as HTMLElement | null;
-    if (zone) {
-      const name = zone.dataset.zone!;
-      if (t.closest(".cv-zone-resize")) return { kind: "zone", name, part: "resize" };
-      if (t.closest(".cv-zone-label")) return { kind: "zone", name, part: "label" };
+    const head = t.closest(".cv-head") as HTMLElement | null;
+    if (head) return { kind: "head", group: head.dataset.group! };
+    const area = t.closest(".cv-area") as HTMLElement | null;
+    if (area) {
+      const id = area.dataset.area!;
+      if (t.closest(".cv-area-resize")) return { kind: "area", id, part: "resize" };
+      if (t.closest(".cv-area-title.is-editing")) return { kind: "area", id, part: "edit" };
+      if (t.closest(".cv-area-head")) return { kind: "area", id, part: "head" };
+      return { kind: "area", id, part: "body" };
     }
     return { kind: "canvas" };
   }
 
-  winRect(key: string) {
-    return this.absRect(key);
+  hitAt(sx: number, sy: number): Hit {
+    const r = this.root.getBoundingClientRect();
+    return this.hit(document.elementFromPoint(sx + r.left, sy + r.top));
   }
 
-  moveWin(key: string, x: number, y: number) {
-    const p = this.layout.windows[key];
-    if (!p) return;
-    if (p.rel) {
-      const pk = this.parentKey(key);
-      const pr = pk ? this.absRect(pk) : null;
-      if (pr) {
-        p.x = x - pr.x;
-        p.y = y - pr.y;
-      } else {
-        p.x = x;
-        p.y = y;
+  itemOf(hit: Hit): string | null {
+    switch (hit.kind) {
+      case "win":
+        return `w:${hit.key}`;
+      case "pill":
+        return `p:${hit.id}`;
+      case "area":
+        return hit.part === "body" ? null : `a:${hit.id}`;
+      case "note":
+        return `n:${hit.id}`;
+      default:
+        return null;
+    }
+  }
+
+  isSelected(item: string) {
+    return this.selection.has(item);
+  }
+
+  select(item: string | null, add: boolean) {
+    if (!item) {
+      if (this.selection.size) {
+        this.selection.clear();
+        this.request();
       }
-    } else {
-      p.x = x;
-      p.y = y;
+      return;
     }
-    this.dirtyAll = true; // children follow
+    if (add) {
+      if (this.selection.has(item)) this.selection.delete(item);
+      else this.selection.add(item);
+    } else this.selection = new Set([item]);
+    if (item.startsWith("w:")) {
+      const v = this.wins.get(item.slice(2));
+      if (v) {
+        v.z = Math.max(...[...this.wins.values()].map((w) => w.z)) + 1;
+        if (!v.el.contains(document.activeElement)) v.el.focus({ preventScroll: true });
+      }
+    } else if (item.startsWith("p:")) this.pills.get(item.slice(2))?.el.focus({ preventScroll: true });
+    else if (item.startsWith("n:")) this.noteViews.get(item.slice(2))?.el.focus({ preventScroll: true });
+    else this.root.focus({ preventScroll: true });
     this.request();
   }
 
-  resizeWin(key: string, w: number, h: number) {
-    const p = this.layout.windows[key];
-    if (!p) return;
-    const cw = clamp(w, MIN_W, MAX_W);
-    const ch = clamp(h, MIN_H, MAX_H);
-    if (p.expanded) {
-      p.ew = cw;
-      p.eh = ch;
-    } else {
-      p.w = cw;
-      p.h = ch;
+  private selectOnly(item: string) {
+    this.select(item, false);
+    if (item.startsWith("w:")) this.reveal(item.slice(2));
+  }
+
+  beginMove(item: string): boolean {
+    if (!this.canArrange()) return false;
+    if (!this.selection.has(item)) this.select(item, false);
+    const items: Moving["items"] = [];
+    const areas = new Set([...this.selection].filter((i) => i.startsWith("a:")).map((i) => i.slice(2)));
+    for (const i of this.selection) {
+      if (i.startsWith("w:")) {
+        const k = i.slice(2);
+        const aid = areaOf(this.doc, k);
+        if (aid && areas.has(aid)) continue; // moves with its area
+        const r = this.rects.get(k);
+        if (r) items.push({ item: i, x: r.x, y: r.y });
+      } else if (i.startsWith("a:")) {
+        const a = this.doc.areas[i.slice(2)];
+        if (a) items.push({ item: i, x: a.x, y: a.y });
+      } else if (i.startsWith("n:")) {
+        const n = this.doc.notes[i.slice(2)];
+        if (n) items.push({ item: i, x: n.x, y: n.y });
+      }
     }
-    this.dirtyWins.add(key);
-    this.dirtyAll = true;
+    if (!items.length) return false;
+    this.moving = { items, dx: 0, dy: 0 };
+    this.hideTip();
+    return true;
+  }
+
+  moveBy(dx: number, dy: number, snap: boolean) {
+    const m = this.moving;
+    if (!m) return;
+    if (snap) {
+      // Snap the first item's position to the grid; the rest keep their offsets.
+      const f = m.items[0]!;
+      dx = Math.round((f.x + dx) / GRID) * GRID - f.x;
+      dy = Math.round((f.y + dy) / GRID) * GRID - f.y;
+    }
+    m.dx = dx;
+    m.dy = dy;
+    // While a window is over an area, the area says so.
+    const wins = m.items.filter((i) => i.item.startsWith("w:"));
+    this.dropArea = undefined;
+    if (wins.length && !m.items.some((i) => i.item.startsWith("a:"))) {
+      const r = this.winRect(wins[0]!.item.slice(2));
+      if (r) this.dropArea = this.areaAt(r.x + r.w / 2, r.y + r.h / 2);
+    }
     this.request();
   }
 
-  zoneRect(name: string) {
-    return this.layout.zones[name] ?? null;
+  /** The topmost area under a point. */
+  private areaAt(x: number, y: number): string | undefined {
+    let best: string | undefined;
+    let z = Number.NEGATIVE_INFINITY;
+    for (const [id, a] of Object.entries(this.doc.areas)) {
+      const r = this.areaRect(id)!;
+      if (x >= r.x && x <= r.x + r.w && y >= r.y && y <= r.y + r.h && a.z > z) {
+        best = id;
+        z = a.z;
+      }
+    }
+    return best;
   }
 
-  moveZone(name: string, x: number, y: number) {
-    const z = this.layout.zones[name];
+  /** The drag ended: one Op for everything it moved, membership decided by where each
+   *  window's centre landed. */
+  endMove(moved: boolean) {
+    const m = this.moving;
+    this.moving = undefined;
+    this.dropArea = undefined;
+    if (!m || !moved || (m.dx === 0 && m.dy === 0)) {
+      this.request();
+      this.afterGesture();
+      return;
+    }
+    const ops: Op[] = [];
+    const dx = Math.round(m.dx);
+    const dy = Math.round(m.dy);
+    for (const it of m.items) {
+      const x = Math.round(it.x + dx);
+      const y = Math.round(it.y + dy);
+      if (it.item.startsWith("a:")) ops.push({ t: "areaPatch", id: it.item.slice(2), patch: { x, y } });
+      else if (it.item.startsWith("n:")) ops.push({ t: "notePatch", id: it.item.slice(2), patch: { x, y } });
+      else {
+        const k = it.item.slice(2);
+        const size = this.sizeOf(k);
+        const target = this.areaAt(x + size.w / 2, y + size.h / 2);
+        const prev = areaOf(this.doc, k);
+        if (prev && prev !== target) ops.push({ t: "areaPatch", id: prev, patch: {}, members: { [k]: null } });
+        if (target) {
+          const a = this.doc.areas[target]!;
+          ops.push({ t: "areaPatch", id: target, patch: {}, members: { [k]: { dx: x - a.x, dy: y - a.y } } });
+        }
+        ops.push({ t: "win", set: { [k]: { ...this.doc.windows[k], x, y } } });
+      }
+    }
+    this.commit({ t: "batch", ops });
+    this.afterGesture();
+  }
+
+  beginResize(item: string): boolean {
+    if (!this.canArrange()) return false;
+    let r: Rect | null = null;
+    if (item.startsWith("w:")) {
+      const k = item.slice(2);
+      if (!this.isExpanded(k)) return false;
+      r = this.winRect(k);
+    } else if (item.startsWith("a:")) r = this.areaRect(item.slice(2));
+    else if (item.startsWith("n:")) r = this.noteRect(item.slice(2));
+    if (!r) return false;
+    this.select(item, false);
+    this.resizing = { item, w: r.w, h: r.h, dw: 0, dh: 0 };
+    return true;
+  }
+
+  resizeBy(dw: number, dh: number, snap: boolean) {
+    const z = this.resizing;
     if (!z) return;
-    z.x = x;
-    z.y = y;
+    z.dw = snap ? Math.round((z.w + dw) / GRID) * GRID - z.w : dw;
+    z.dh = snap ? Math.round((z.h + dh) / GRID) * GRID - z.h : dh;
     this.request();
   }
 
-  resizeZone(name: string, w: number, h: number) {
-    const z = this.layout.zones[name];
+  endResize() {
+    const z = this.resizing;
     if (!z) return;
-    z.w = Math.max(160, w);
-    z.h = Math.max(120, h);
-    this.request();
+    const id = z.item.slice(2);
+    let r: Rect | null = null;
+    if (z.item.startsWith("w:")) r = this.winRect(id);
+    else if (z.item.startsWith("a:")) r = this.areaRect(id);
+    else r = this.noteRect(id);
+    this.resizing = undefined;
+    if (!r || (z.dw === 0 && z.dh === 0)) {
+      this.afterGesture();
+      return;
+    }
+    const w = Math.round(r.w);
+    const h = Math.round(r.h);
+    if (z.item.startsWith("w:")) {
+      const cur = this.doc.windows[id] ?? { ...this.minePos(id)!, expanded: true };
+      this.commit({ t: "win", set: { [id]: { ...cur, w, h } } });
+    } else if (z.item.startsWith("a:")) this.commit({ t: "areaPatch", id, patch: { w, h } });
+    else this.commit({ t: "notePatch", id, patch: { w, h } });
+    this.layoutSig = "";
+    this.afterGesture();
   }
 
-  focusWin(key: string) {
-    const v = this.views.get(key);
-    if (!v) return;
-    if (v.z !== this.zTop) v.z = ++this.zTop;
-    if (document.activeElement !== v.el && !v.el.contains(document.activeElement)) v.el.focus({ preventScroll: true });
-    this.dirtyWins.add(key);
-    this.request();
-  }
-
-  toggleExpand(key: string) {
-    this.toggleExpandKey(key);
-  }
-
-  private focusedKey(): SessionKey | undefined {
-    const a = document.activeElement as HTMLElement | null;
-    const w = a?.closest(".cv-win") as HTMLElement | null;
-    return w?.dataset.key;
-  }
-
-  nudgeFocused(dx: number, dy: number) {
-    const key = this.focusedKey();
-    if (!key) return;
-    const r = this.absRect(key);
+  marquee(r: Rect | null, draw: boolean, done: boolean) {
+    const e = this.marqueeEl;
+    if (!r || (done && !draw)) e.hidden = true;
+    if (r) {
+      e.hidden = done;
+      setClass(e, "is-draw", draw);
+      e.style.transform = `translate3d(${r.x}px, ${r.y}px, 0)`;
+      e.style.width = `${r.w}px`;
+      e.style.height = `${r.h}px`;
+    }
     if (!r) return;
-    this.moveWin(key, r.x + dx, r.y + dy);
+    if (draw) {
+      if (!done) return;
+      e.hidden = true;
+      if (r.w < 40 || r.h < 40) return;
+      // Windows whose centre is inside become members.
+      const keys = [...this.wins.keys()].filter((k) => {
+        const w = this.winRect(k)!;
+        const cx = w.x + w.w / 2;
+        const cy = w.y + w.h / 2;
+        return cx >= r.x && cx <= r.x + r.w && cy >= r.y && cy <= r.y + r.h;
+      });
+      this.newArea(undefined, r, keys);
+      return;
+    }
+    const sel = new Set<string>();
+    for (const k of this.wins.keys()) {
+      const w = this.winRect(k);
+      if (w && overlaps(w, r, 0)) sel.add(`w:${k}`);
+    }
+    for (const id of this.areaViews.keys()) {
+      const a = this.areaRect(id);
+      if (a && a.x >= r.x && a.y >= r.y && a.x + a.w <= r.x + r.w && a.y + a.h <= r.y + r.h) sel.add(`a:${id}`);
+    }
+    for (const id of this.noteViews.keys()) {
+      const n = this.noteRect(id);
+      if (n && overlaps(n, r, 0)) sel.add(`n:${id}`);
+    }
+    this.selection = sel;
+    this.request();
   }
 
-  expandFocused() {
-    const key = this.focusedKey();
-    if (key) this.toggleExpandKey(key);
+  presetDrag() {
+    if (this.saidPreset) return;
+    this.saidPreset = true;
+    this.chrome.say("Arrange by hand in My layout");
   }
 
-  focusSearch() {
-    this.search.focus();
-    this.search.select();
+  activate(hit: Hit) {
+    switch (hit.kind) {
+      case "win":
+        this.toggleExpand(hit.key);
+        break;
+      case "pill":
+        this.openAgent(hit.id);
+        break;
+      case "area":
+        if (this.canArrange()) void this.renameArea(hit.id);
+        break;
+      case "note":
+        void this.editNote(hit.id);
+        break;
+    }
   }
 
-  clearSearch() {
-    if (this.search.value) this.search.value = "";
-    this.setQuery("");
+  escape() {
+    this.hideTip();
+    if (this.selection.size) {
+      this.selection.clear();
+      this.request();
+      return;
+    }
+    if (this.chrome.search.value || this.query) {
+      this.chrome.search.value = "";
+      this.setQuery("");
+    }
   }
 
-  commit() {
-    this.save();
-    this.saveVp();
-    this.save.flush();
+  pointerAt(sx: number, sy: number) {
+    this.pointer = { x: sx, y: sy };
+  }
+
+  setGesture(on: boolean) {
+    this.gesture = on;
+    if (!on) this.afterGesture();
+  }
+
+  private afterGesture() {
+    if (!this.gesture && this.editing === 0 && this.pendingRemote) this.adopt(this.pendingRemote.v);
+  }
+
+  busyTyping() {
+    return this.editing > 0 || this.map.isEditing || this.map.hasPopover;
+  }
+
+  actions(): ViewShortcut[] {
+    const viewKeys: ViewShortcut[] = VIEWS.map((v, i) => ({
+      id: `view.${v.id}`,
+      label: `View: ${v.label}`,
+      keys: [String(i + 1)],
+      run: () => this.setView(v.id),
+    }));
+    const labelKeys: ViewShortcut[] = LABEL_COLORS.map((c, i) => ({
+      id: `label.${c}`,
+      label: `Label the selection ${c}`,
+      keys: [`mod+alt+${i + 1}`],
+      run: () => this.setLabel(c),
+    }));
+    const at = () => this.toWorld(this.pointer.x, this.pointer.y);
+    const nudge = (dx: number, dy: number) => () => this.nudge(dx, dy);
+    return [
+      ...viewKeys,
+      { id: "fit", label: "Fit everything", keys: ["0"], run: () => this.fit() },
+      { id: "zoom-in", label: "Zoom in", keys: ["mod+plus", "mod+=", "plus", "="], run: () => this.zoomStep(1) },
+      { id: "zoom-out", label: "Zoom out", keys: ["mod+-", "-"], run: () => this.zoomStep(-1) },
+      { id: "zoom-actual", label: "Actual size", keys: ["shift+0"], run: () => this.zoomTo(1) },
+      { id: "tidy", label: "Tidy My layout", keys: ["shift+t"], run: () => this.tidy() },
+      {
+        id: "area",
+        label: "New area at the pointer",
+        keys: ["a"],
+        run: () => this.newArea(at()),
+        hint: "hold and drag to draw one",
+      },
+      { id: "note", label: "New note at the pointer", keys: ["n"], run: () => this.newNote(at()) },
+      { id: "enter", label: "Expand, or edit the title or note", keys: ["enter"], run: () => this.enter() },
+      {
+        id: "delete",
+        label: "Delete the area or note; hide windows",
+        keys: ["backspace", "delete"],
+        run: () => this.deleteSelection(),
+      },
+      { id: "undo", label: "Undo", keys: ["mod+z"], run: () => this.undo() },
+      { id: "redo", label: "Redo", keys: ["shift+mod+z"], run: () => this.redo() },
+      ...labelKeys,
+      { id: "label.none", label: "Remove the selection's label", keys: ["mod+alt+0"], run: () => this.setLabel(null) },
+      {
+        id: "search",
+        label: "Search the canvas",
+        keys: ["/"],
+        run: () => {
+          this.chrome.bar.classList.add("is-search-open");
+          this.chrome.search.focus();
+          this.chrome.search.select();
+        },
+      },
+      { id: "left", label: "Nudge left", keys: ["left"], run: nudge(-1, 0), hint: "My layout" },
+      { id: "right", label: "Nudge right", keys: ["right"], run: nudge(1, 0) },
+      { id: "up", label: "Nudge up", keys: ["up"], run: nudge(0, -1) },
+      { id: "down", label: "Nudge down", keys: ["down"], run: nudge(0, 1) },
+      { id: "left-grid", label: "Nudge left one grid step", keys: ["shift+left"], run: nudge(-GRID, 0) },
+      { id: "right-grid", label: "Nudge right one grid step", keys: ["shift+right"], run: nudge(GRID, 0) },
+      { id: "up-grid", label: "Nudge up one grid step", keys: ["shift+up"], run: nudge(0, -GRID) },
+      { id: "down-grid", label: "Nudge down one grid step", keys: ["shift+down"], run: nudge(0, GRID) },
+    ];
   }
 
   // ---------- the map ----------
-
-  /** On phones the map is a per-device choice (off by default); elsewhere it is shared. */
-  private get mapOn(): boolean {
-    if (this.narrow) return this.api.local.get<boolean>(MAP_LOCAL_KEY) ?? false;
-    return !!this.layout.mapOn;
-  }
-
-  private toggleMap() {
-    if (this.narrow) this.api.local.set(MAP_LOCAL_KEY, !this.mapOn);
-    else {
-      this.layout.mapOn = !this.layout.mapOn;
-      this.save();
-    }
-    this.applyMapOn();
-    if (this.mapOn) this.fit();
-  }
-
-  private applyMapOn() {
-    const on = this.mapOn;
-    setClass(this.root, "has-map", on);
-    setClass(this.mapBtn, "is-on", on);
-    this.map.setOn(on);
-    if (on) {
-      this.map.build();
-      this.map.layoutNodes();
-    }
-    this.dirtyAll = true;
-    this.request();
-  }
-
-  private addCustomNode() {
-    if (!this.mapOn) this.toggleMap();
-    const c = this.toWorld(this.size.w / 2, this.size.h / 2 - 40);
-    this.map.addCustom(Math.round(c.x / GRID) * GRID, Math.round(c.y / GRID) * GRID);
-    this.save();
-    this.request();
-  }
 
   private mapHost(): MapHost {
     return {
       api: this.api,
       root: this.root,
-      world: this.world,
       tethers: this.tethers,
-      layout: () => this.layout,
+      doc: () => this.doc.map,
       snapshot: () => this.snapshot,
-      liveWindows: () => {
-        const out: { session: SessionSummary; rect: Rect }[] = [];
-        for (const v of this.views.values()) {
-          if (v.session.parentId || v.session.state === "done" || this.leaving.has(v.key)) continue;
-          const rect = this.absRect(v.key);
-          if (rect) out.push({ session: v.session, rect });
-        }
-        return out;
-      },
+      sessions: () =>
+        [...this.wins.values()]
+          .map((w) => w.session)
+          .sort(
+            (a, b) => STATE_ORDER.indexOf(a.state) - STATE_ORDER.indexOf(b.state) || b.lastAt.localeCompare(a.lastAt),
+          ),
       toScreen: (wx, wy) => this.toScreen(wx, wy),
       request: () => this.request(),
-      save: () => this.save(),
-      narrow: () => this.narrow,
-      taken: () => [
-        ...this.visibleRects(),
-        ...[...this.map.nodes.values()].map((n) => ({ x: n.x, y: n.y, w: n.w, h: n.h })),
-      ],
+      commit: () => this.commitMap(),
       onStarted: (session, nodeId) => {
         this.pendingStart.set(session, nodeId);
         const machine = this.map.nodes.get(nodeId)?.label ?? "the machine";
-        this.say(`starting on ${machine}`);
+        this.chrome.say(`Starting on ${machine}`);
       },
+      narrow: () => this.phone,
     };
   }
 
-  hitAt(sx: number, sy: number): Hit {
-    const r = this.root.getBoundingClientRect();
-    const el = document.elementFromPoint(sx + r.left, sy + r.top);
-    return this.hit(el);
+  commitMap() {
+    const set = JSON.parse(JSON.stringify(this.doc.map));
+    exec(this.doc, { t: "map", set });
+    this.write({ t: "map", set });
+    this.relayout(false);
   }
 
   nodeRect(id: string) {
@@ -1374,7 +2846,9 @@ class Canvas implements InputHost {
 
   moveNode(id: string, x: number, y: number) {
     this.map.moveNode(id, x, y);
-    this.request();
+    if (this.viewId === "map") {
+      for (const [k, r] of this.map.rows) if (this.wins.has(k)) this.rects.set(k, r);
+    }
   }
 
   beginLink(id: string) {
@@ -1401,47 +2875,48 @@ class Canvas implements InputHost {
     this.map.endGhost(target);
   }
 
-  select(id: string | null) {
+  selectNode(id: string | null) {
     this.map.select(id);
   }
 
-  deleteSelected() {
-    return this.map.deleteSelected();
-  }
-
-  busyTyping() {
-    return this.map.isEditing || this.map.hasPopover;
-  }
-
   hover(id: string | null) {
-    if (!this.mapOn) return;
-    this.map.setFocus(id);
-  }
-
-  answerFocused(decision: "allow" | "deny") {
-    const key = this.focusedKey();
-    const v = key ? this.views.get(key) : undefined;
-    void v?.answer(decision);
-  }
-
-  /** Enter: the prompt line when the host can carry one, else the session beside the canvas. */
-  enterFocused() {
-    const key = this.focusedKey();
-    const v = key ? this.views.get(key) : undefined;
-    if (!v) return;
-    if (!v.focusPrompt()) this.openSplit(key!);
-  }
-
-  /** The session page in the host's split panel, morphing out of the window's rect. */
-  private openSplit(key: SessionKey) {
-    const v = this.views.get(key);
-    const r = v?.el.getBoundingClientRect();
-    this.api.openSession(
-      key,
-      r ? { split: true, from: { x: r.x, y: r.y, width: r.width, height: r.height } } : { split: true },
-    );
+    const pill = id?.startsWith("pill:") ? id.slice(5) : null;
+    if (pill !== this.hoverPill) {
+      this.hoverPill = pill;
+      for (const [k, v] of this.wins) setClass(v.el, "is-tethered", !!pill && this.pills.get(pill)?.parent === k);
+      this.request();
+    }
+    if (this.viewId === "map") this.map.setFocus(id?.startsWith("pill:") ? null : id);
   }
 }
+
+/** "label:red machine:build-box -label:none ship it" → tokens and the free text. */
+function parseQuery(q: string): { tokens: { k: string; v: string; neg: boolean }[]; text: string } {
+  const tokens: { k: string; v: string; neg: boolean }[] = [];
+  const rest: string[] = [];
+  for (const part of q.split(/\s+/).filter(Boolean)) {
+    const m = /^(-?)(label|machine|harness|repo):(.+)$/.exec(part);
+    if (m) tokens.push({ neg: m[1] === "-", k: m[2]!, v: m[3]! });
+    else rest.push(part);
+  }
+  return { tokens, text: rest.join(" ") };
+}
+
+function place(e: HTMLElement, r: Rect) {
+  const t = `translate3d(${r.x}px, ${r.y}px, 0)`;
+  if (e.style.transform !== t) e.style.transform = t;
+  const w = `${r.w}px`;
+  const h = `${r.h}px`;
+  if (e.style.width !== w) e.style.width = w;
+  if (e.style.height !== h) e.style.height = h;
+}
+
+function listWords(xs: string[]): string {
+  if (xs.length <= 1) return xs[0] ?? "";
+  return `${xs.slice(0, -1).join(", ")} and ${xs[xs.length - 1]}`;
+}
+
+const capital = (s: string) => (s ? s[0]!.toUpperCase() + s.slice(1) : s);
 
 const theme: Theme = {
   mount(container, api) {

@@ -11,7 +11,7 @@ import the types without depending on the GUI package:
 **This mirrors `shared/theme-api.ts`, `shared/plugin-api.ts` and `shared/api.ts` in the GUI repo and must be kept in
 sync by hand.** The GUI is the source of truth; copy, never edit here.
 
-Mirrors GUI commit `b306d73b040897029bef1257575b7ffb280924ae` (`Theme plugin contract`).
+Mirrors the GUI's `shared/api.ts`, `shared/theme-api.ts` and `shared/color-theme.ts` as of branch `mp/organize` (labels, `AgentRun`, `ThemeApi.labels` / `menu` / `storage.update` / `storage.subscribe`); the other files as of GUI commit `b306d73b040897029bef1257575b7ffb280924ae`.
 
 To refresh:
 
