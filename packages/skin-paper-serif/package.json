@@ -1,6 +1,6 @@
 {
   "name": "@sessionpipe-gui/skin-paper-serif",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "A sessionpipe GUI skin: warm paper, a bundled serif for the interface text (Source Serif 4, OFL), square corners, one-pixel hairlines, roomier rows.",
   "keywords": [
     "sessionpipe",

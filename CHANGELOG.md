@@ -6,6 +6,28 @@ All notable changes to the packages in `sessionpipe-gui-themes`. The format foll
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-10-23
+
+Alongside `sessionpipe-gui` 0.2.0, the native redesign.
+
+### Changed
+
+- **`@sessionpipe-gui/theme-canvas`**: a calm, native canvas. The lanes of id chips,
+  duplicate device chips and repeated pairing hints are gone; a window is one status
+  glyph, the title, where it runs and what it is doing. One segmented control picks the
+  view: *My layout*, State, Machine, Harness, Repo, Label or Map; windows animate into
+  labelled groups on a clean grid, and Tidy re-grids.
+
+### Added
+
+- **`@sessionpipe-gui/theme-canvas`**: *My layout*, your own titled areas (draw, rename,
+  resize, label, drop sessions in) and sticky notes, kept by the receiver so every device
+  sees one layout; right-click menus on the ground, an area, a note and a window; colour
+  labels as one dot on a window; subagents as pills on a thin connector to their
+  orchestrator's window, in every view.
+- **`@sessionpipe-gui/theme-types`**: labels and agents on the `ThemeApi`, matching the
+  GUI's 0.2.0 host.
+
 ## [0.1.0] - 2026-10-15
 
 The first public release, alongside `sessionpipe-gui` 0.1.0.
@@ -39,5 +61,6 @@ The first public release, alongside `sessionpipe-gui` 0.1.0.
   `scripts/rename-unscoped.mjs` switches the names to `sessionpipe-gui-<kind>-<id>` in one
   command; a `v*` tag publishes with npm provenance from GitHub Actions (RELEASING.md).
 
-[Unreleased]: https://github.com/spacesheep-dev/sessionpipe-gui-themes/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/spacesheep-dev/sessionpipe-gui-themes/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/spacesheep-dev/sessionpipe-gui-themes/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/spacesheep-dev/sessionpipe-gui-themes/releases/tag/v0.1.0

@@ -1,6 +1,6 @@
 {
   "name": "@sessionpipe-gui/color-themes",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "description": "Color themes for the sessionpipe GUI: token sets as JSON, dropped into <stateDir>/color-themes/.",
   "license": "Apache-2.0",

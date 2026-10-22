@@ -1,6 +1,6 @@
 {
   "name": "@sessionpipe-gui/theme-types",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Type-only mirror of the sessionpipe GUI's extension contracts (shared/theme-api.ts, shared/plugin-api.ts, shared/api.ts).",
   "keywords": [
     "sessionpipe",

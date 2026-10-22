@@ -1,6 +1,6 @@
 {
   "name": "@sessionpipe-gui/theme-canvas",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Every live session as a draggable window on an infinite canvas. A sessionpipe GUI theme.",
   "keywords": [
     "sessionpipe",
@@ -35,6 +35,6 @@
     "prepublishOnly": "node scripts/build.mjs"
   },
   "devDependencies": {
-    "@sessionpipe-gui/theme-types": "0.1.0"
+    "@sessionpipe-gui/theme-types": "0.2.0"
   }
 }
