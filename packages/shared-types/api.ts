@@ -125,8 +125,13 @@ export interface SessionSummary {
     compactions: number;
     filesChanged: number;
     attentions: number;
+    /** Agents in `agents` not yet ended (running or stale). `subagents` above counts every
+     *  subagent.started ever; this is the live number. */
+    agentsRunning: number;
   };
-  /** The tool running right now (tool.started without its tool.ended), if any. */
+  /** The orchestrator's own tool running right now (tool.started without its tool.ended),
+   *  if any. A subagent's tool (one with `agent_id`) runs on its AgentRun instead.
+   *  `agentId` is kept for older clients and is no longer set. */
   currentTool?: { tool: string; callId?: string; since: string; agentId?: string };
   /** The turn running right now, if any. */
   currentTurn?: { turnId?: string; since: string; promptChars?: number };
@@ -138,6 +143,11 @@ export interface SessionSummary {
   lastAssistant?: string;
   /** Number of subagent sessions whose parent_id is this session. */
   children: number;
+  /** The subagents this session ran, open ones first, then the newest ended, at most
+   *  AGENTS_MAX. Read from its own events (subagent.started / .ended, `agent_id` on tools),
+   *  which is how Claude Code and Codex report them; a child session with `parent_id` is
+   *  merged in by id with `session` set. Empty when it ran none. */
+  agents: AgentRun[];
   /** Last tool names, newest last, at most 8 — for a sparkline of activity. */
   recentTools: { tool: string; ok: boolean; ms?: number }[];
   /** The store's smarter readings (ARCHITECTURE.md "The store's readings"): what is
@@ -148,6 +158,53 @@ export interface SessionSummary {
 }
 
 export const SNIPPET_CHARS = 280;
+
+/** At most this many AgentRuns ride on a summary (open ones are never dropped). */
+export const AGENTS_MAX = 20;
+
+/** A subagent, as the GUI reads it from the protocol (spec: subagent.started / .ended,
+ *  `agent_id` on tool events, the Agent / Task tool's input and output at tier 3). Claude
+ *  Code and Codex keep a subagent inside its parent's session; a harness that gives it a
+ *  session of its own (`parent_id`) is linked through `session`. Nothing here is guessed:
+ *  a field the events did not carry is absent. */
+export interface AgentRun {
+  /** `data.agent_id` (a child session's id when it came as one). */
+  id: string;
+  /** `data.agent_type`: "Explore", "general-purpose". */
+  type?: string;
+  /** The launching Agent / Task tool's `input.description` (tier 3): the line a person
+   *  recognises, "Find ad-hoc money formatting". */
+  description?: string;
+  /** The launching tool call: by its `output.agentId` (tier 3), else the newest Agent /
+   *  Task call not yet matched to an agent. */
+  callId?: string;
+  /** The turn that spawned it: the turn open when it started (Claude Code also stamps it
+   *  on every one of the agent's tools). */
+  turnId?: string;
+  /** running: started and not ended, with an event of its own within STALE_AFTER_MS.
+   *  stale: not ended and silent longer. done: subagent.ended, or the session ended. */
+  state: "running" | "stale" | "done";
+  startedAt: string;
+  endedAt?: string;
+  /** Its newest event. */
+  lastAt: string;
+  /** Its own tool calls (tool.ended with its `agent_id`); 0 for a harness that does not
+   *  stamp them (Codex), see `attributed`. */
+  tools: number;
+  toolErrors: number;
+  /** Whether its tools are told apart from the orchestrator's (they carry `agent_id`).
+   *  False for Codex, whose subagent tools arrive unmarked: show no tool facts then. */
+  attributed: boolean;
+  /** Its tool running right now. */
+  currentTool?: { tool: string; callId?: string; since: string };
+  /** Its last tools, newest last, at most 4. */
+  recentTools: { tool: string; ok: boolean; ms?: number }[];
+  /** A synchronous Agent call's output (tier 3), cut to SNIPPET_CHARS. Absent when the
+   *  agent ran in the background: the protocol does not carry its result then. */
+  result?: string;
+  /** The child session, when the harness sent the agent as one (`parent_id`). */
+  session?: SessionKey;
+}
 
 /** slow_tool: `currentTool` has run longer than SLOW_TOOL_MS. error_streak: the last
  *  3+ tool.ended were `ok: false`. loop: within the last 10 tool.started the same tool
@@ -228,6 +285,8 @@ export interface Snapshot {
   viewers?: Viewer[];
   /** Plugins' open suggestions (shared/plugin-api.ts); present on the stream's first frame. */
   suggestions?: Suggestion[];
+  /** The person's colour labels; present on the stream's first frame. */
+  labels?: Labels;
 }
 
 /** A server plugin's suggested answer to an open permission (shared/plugin-api.ts). Advice
@@ -258,7 +317,51 @@ export type StreamMessage =
   | { kind: "stats"; stats: Stats }
   | { kind: "control"; message: ControlActivity }
   | { kind: "viewers"; viewers: Viewer[] }
-  | { kind: "suggestion"; suggestion: Suggestion };
+  | { kind: "suggestion"; suggestion: Suggestion }
+  /** The whole label document after a change (small, idempotent; drop one whose `rev`
+   *  is older than what the page has). */
+  | { kind: "labels"; labels: Labels }
+  /** A view's server-side state (THEME_ROUTES.state) was written; `etag` names the new
+   *  version, so the page that wrote it can tell its own write from another device's. */
+  | { kind: "viewState"; id: string; etag: string };
+
+// ---------- labels (the person's colour labels; GET / PATCH ROUTES.ui.labels) ----------
+
+/** Seven muted colours, Finder's set. Ids, never hex: the colours are tokens
+ *  (`--label-red` …) each skin and scheme tunes. */
+export type LabelColor = "red" | "orange" | "yellow" | "green" | "blue" | "purple" | "grey";
+export const LABEL_COLORS: readonly LabelColor[] = ["red", "orange", "yellow", "green", "blue", "purple", "grey"];
+/** A label's own name when the person gave it none. */
+export const LABEL_DEFAULT_NAMES: Readonly<Record<LabelColor, string>> = {
+  red: "Red",
+  orange: "Orange",
+  yellow: "Yellow",
+  green: "Green",
+  blue: "Blue",
+  purple: "Purple",
+  grey: "Grey",
+};
+/** A label name's longest form, in characters. */
+export const LABEL_NAME_MAX = 32;
+/** Labelled sessions the server keeps at most. */
+export const LABELS_MAX = 5000;
+
+/** `<stateDir>/labels.json`, as the server serves it. One label per session. */
+export interface Labels {
+  /** Bumped on every change: a page drops a frame older than what it has. */
+  rev: number;
+  /** The names the person gave; a colour without one is called by LABEL_DEFAULT_NAMES. */
+  names: Partial<Record<LabelColor, string>>;
+  sessions: Record<SessionKey, LabelColor>;
+}
+
+/** A merge (PATCH): `null` clears. Several keys at once serve a multi-select "Label ▸". */
+export interface LabelsPatch {
+  sessions?: Record<SessionKey, LabelColor | null>;
+  names?: Partial<Record<LabelColor, string | null>>;
+}
+
+export const EMPTY_LABELS: Labels = Object.freeze({ rev: 0, names: {}, sessions: {} }) as Labels;
 
 /** A browser connected to this GUI's stream right now: a phone on the LAN, this
  *  laptop's own tab. The receiver's reading of "devices", from the connection only;
@@ -269,6 +372,8 @@ export interface Viewer {
   /** Remote address as seen by the server; "this machine" when loopback. */
   ip: string;
   loopback: boolean;
+  /** Came through the trusted https proxy (`Info.remote`): from outside the LAN. */
+  forwarded?: boolean;
   device: "phone" | "tablet" | "laptop" | "desktop" | "unknown";
   /** Short human label from the user agent, e.g. "iPhone · Safari", "Mac · Chrome". */
   label: string;
@@ -304,6 +409,10 @@ export interface DetailQuery {
   slim?: boolean;
   /** With `slim`: a shorter cut, 200–2048 chars, for list pages. */
   preview?: number;
+  /** Only this subagent's events (an AgentRun id): its subagent.started / .ended, the
+   *  tool calls stamped with its `agent_id`, and the Agent / Task call that launched it.
+   *  Paged like the whole session; `total` counts the filtered events. */
+  agent?: string;
 }
 
 export interface FeedPage {
@@ -453,8 +562,9 @@ export interface Info {
   startedAt: string;
   port: number;
   /** `local` and `lan` are plain http (sinks, the daemon, the trust page); `https` is
-   *  the one secure origin, present with TLS mode on (`Info.tls`). */
-  urls: { local: string; lan: string[]; https?: string };
+   *  the secure origin TLS mode serves (`Info.tls`); `public` the one a trusted reverse
+   *  proxy on this machine serves from anywhere (`Info.remote`). */
+  urls: { local: string; lan: string[]; https?: string; public?: string };
   /** The `sessionpipe sink add …` line for another machine, with the LAN URL and the token. */
   sinkCommand: string;
   sinkToken: string;
@@ -469,7 +579,11 @@ export interface Info {
    *  uploaded from the composer, ROUTES.ui.attachments). Absent on older servers. */
   storage: { dir: string; bytes: number; attachments?: number };
   wellKnown: Record<string, unknown>;
-  control: { enabled: boolean; rpId: string; machines: number };
+  /** `origins`: the browser origins passkeys made for `rpId` work on, so a visitor on the
+   *  wrong address can be sent to the right one: the public url when it set the rp id,
+   *  `https://<rpId>:<port>` for the TLS name, `http://localhost:<port>` only when the rp
+   *  id is `localhost`. Absent on older servers. */
+  control: { enabled: boolean; rpId: string; machines: number; origins?: string[] };
   /** TLS mode (`--tls`): the same port also answers https with a certificate from the
    *  GUI's own local CA, so passkeys work from a phone. Absent on older servers. */
   tls?: TlsInfo;
@@ -477,6 +591,23 @@ export interface Info {
    *  `.home` suffix. A session whose `machine` matches runs here, so a file path on this
    *  machine means something to it. Absent on older servers. */
   hostname?: string;
+  /** Reached from anywhere (`--public-url`): a trusted https reverse proxy on this machine,
+   *  Tailscale's `tailscale serve` for one, forwards to the port. Absent when not set up. */
+  remote?: RemoteInfo;
+}
+
+/** The GUI from outside the LAN. The proxy terminates https with a certificate browsers
+ *  already trust, so no CA to install; it runs on this machine and forwards to the port,
+ *  and the server trusts its `X-Forwarded-For` / `-Proto` / `-Host` on connections from
+ *  loopback (so a visitor is never mistaken for this machine). The rp id is the url's host,
+ *  so passkeys made for the `.local` name must be made again under this one. */
+export interface RemoteInfo {
+  /** The https origin, e.g. `https://laptop.tail1234.ts.net`; `Info.control.rpId` is its host. */
+  url: string;
+  host: string;
+  /** For a machine elsewhere: push events, and pair control, through the same url. */
+  sinkCommand: string;
+  connectCommand: string;
 }
 
 // ---------- attachments (images sent beside a control prompt; shared/attachments.ts) ----------
@@ -530,6 +661,27 @@ export interface TlsInfo {
 // ---------- setup (the first-run page; GET /api/ui/setup/status, this machine only) ----------
 
 /** Live facts the /setup page polls every two seconds. Nothing here is cached. */
+/** One harness of the protocol registry (sessionpipe's spec/ADAPTERS.md) as the setup page
+ *  sees it on this machine (`server/setup/harnesses.ts`). Every registry name is listed,
+ *  installed or not; the page shows the installed ones. */
+export interface HarnessStatus {
+  /** The registry name: `claude-code`, `codex`, `gemini-cli`, `antigravity`, `cursor`, … */
+  name: string;
+  /** The product's name: "Claude Code", "Gemini CLI". */
+  label: string;
+  /** The app or CLI is on this machine: its config dir, its app bundle, or its command on the PATH. */
+  installed: boolean;
+  /** `on`: the harness's hooks config names sessionpipe · `off`: installed, but the hooks are
+   *  not written yet (`npx sessionpipe install`) · `unsupported`: sessionpipe has no adapter
+   *  for it yet (the registry's M7 rows: cursor, copilot-cli, droid, kiro, opencode). */
+  hooks: "on" | "off" | "unsupported";
+  /** Where that harness reads its hooks (the file `sessionpipe install` writes). */
+  configPath: string;
+  /** This machine's sessions in the store for this harness, and their latest event (ISO). */
+  sessions: number;
+  lastEventAt?: string;
+}
+
 export interface SetupStatus {
   sessionpipe: {
     /** A `sessionpipe` CLI on the PATH or at ~/.local/bin. */
@@ -539,6 +691,8 @@ export interface SetupStatus {
     outbox: { path: string; present: boolean; sessions: number };
   };
   events: { total: number; lastAt?: string };
+  /** The registry's harnesses on this machine, in registry order (disk probed every 10 s). */
+  harnesses: HarnessStatus[];
   tls: {
     on: boolean;
     hostname: string;
@@ -571,8 +725,87 @@ export interface SetupStatus {
   viewers: { phones: number };
   /** Control messages that reached `delivered` (step 5 turns green after the first one). */
   tried: { delivered: number };
+  /** Step 6, optional: the GUI from anywhere through a trusted https proxy (`Info.remote`). */
+  remote: {
+    /** `--public-url`, when set (also remembered in config.json). */
+    publicUrl?: string;
+    /** Tailscale on this machine, the proxy the setup page recommends: `tailscale status`
+     *  answered (`running`), this node's MagicDNS name without the trailing dot, and whether
+     *  `tailscale serve` already forwards to this port (null when it could not tell). */
+    tailscale: { installed: boolean; running: boolean; dnsName?: string; ips?: string[]; serving: boolean | null };
+    /** Browsers on the stream that came through the proxy (a forwarded address). */
+    viewers: number;
+  };
   platform: string | string;
   uiKey: string;
+}
+
+// ---------- phone (connecting a phone; GET /api/ui/phone, server/phone) ----------
+
+/** Everything the "connect a phone" flow needs in one read, polled while the page is open.
+ *  `lan` is "see it on your phone": the plain-http LAN url with the UI key (the trust page
+ *  first when TLS is on), as a QR. The rest is "send from your phone": a passkey on a real
+ *  https origin, through Tailscale (`tailscale serve` → `publicUrl`) or the local CA
+ *  (`tls`), and the devices the paired machines trust or that wait to be. */
+export interface PhoneInfo {
+  lan: {
+    url: string;
+    /** A `data:image/png;base64,…` URI of the url, for an <img>. */
+    qr: string;
+  };
+  /** The rp id passkeys are made for right now (`Info.control.rpId`). */
+  rpId: string;
+  /** TLS mode is on (the local CA path is available). */
+  tls: boolean;
+  /** `--public-url`, when set: the https origin a phone opens from anywhere. */
+  publicUrl: string | null;
+  tailscale: {
+    installed: boolean;
+    running: boolean;
+    /** This node's MagicDNS host (`laptop.tail1234.ts.net`), when connected. */
+    name: string | null;
+    /** `tailscale serve` already forwards to this port. */
+    serving: boolean;
+  };
+  /** The passkeys the paired machine(s) trust, as the GUI sees them: one row per key id. */
+  trusted: PhoneTrustedKey[];
+  /** Device requests waiting for a trusted device's approval, newest first. */
+  pending: PhonePendingDevice[];
+}
+
+export interface PhoneTrustedKey {
+  id: string;
+  /** The name given at enrolment; "" when none was. */
+  name: string;
+  addedAt: string;
+}
+
+export interface PhonePendingDevice {
+  /** The device request id (ROUTES.ui.phone + `/device/:id` reads it back). */
+  id: string;
+  name: string;
+  /** The six digits shown on both ends. */
+  digits: string;
+  since: string;
+}
+
+/** GET /api/ui/phone/device/:id: what the phone polls after making its passkey. `pending`
+ *  until a trusted device's `key.add` is delivered (`trusted`), refused by the machine or
+ *  rejected on the approving device (`refused`), or ten minutes pass (`expired`). An id
+ *  the server does not know reads `refused`. `machine` is the name of the machine that
+ *  trusts it, once one does. */
+export interface PhoneDeviceState {
+  state: "pending" | "trusted" | "refused" | "expired";
+  digits: string;
+  machine: string | null;
+}
+
+/** POST /api/ui/phone/trust-check: `https` is true when the request itself arrived over
+ *  TLS (or through the trusted https proxy), which is the proof that the phone's trust of
+ *  the CA, or its Tailscale route, works. */
+export interface PhoneTrustCheck {
+  https: boolean;
+  rpId: string;
 }
 
 // ---------- control (phase 2; shapes fixed now so both sides can plan) ----------
@@ -599,6 +832,30 @@ export interface ControlActivity {
   ackSession?: string;
   takenAt?: string;
   ackedAt?: string;
+}
+
+// ---------- extras (the curated catalogue; server/extensions/catalog.ts) ----------
+
+export type ExtraKind = "view" | "skin" | "plugin";
+
+export interface ExtraEntry {
+  /** The manifest id the installed folder gets. */
+  id: string;
+  kind: ExtraKind;
+  name: string;
+  /** The npm package name it would install from, kept for the day the packages are
+   *  published; today every entry ships inside the GUI and nothing installs from npm. */
+  npm: string;
+  /** One line. */
+  line: string;
+  /** What it weighs as packed, rounded ("59 kB"). */
+  size: string;
+  /** Ships inside the GUI's package: nothing to install. */
+  bundled?: boolean;
+}
+
+export interface ExtrasResponse {
+  extras: (ExtraEntry & { installed: boolean })[];
 }
 
 // ---------- routes ----------
@@ -646,6 +903,18 @@ export const ROUTES = {
      *  as multipart/form-data file parts → Attachment (one file), or { attachments } (several).
      *  413 `too_large` over ATTACHMENT_MAX_BYTES, 415 `unsupported_type`, 400 `not_an_image`. */
     attachments: "/api/ui/attachments",
+    /** GET → ExtrasResponse: the curated catalogue of official views, skins and plugins
+     *  with what is installed. POST /api/ui/extras/:id/install (loopback): install one
+     *  from npm; streams text/plain and ends with a line `ok` or `failed`. */
+    extras: "/api/ui/extras",
+    /** Connecting a phone (server/phone): GET → PhoneInfo; POST /tailscale (loopback:
+     *  `tailscale serve --bg <port>`, then the public url, → PhoneInfo, or { error });
+     *  GET /device/:id → PhoneDeviceState; POST /trust-check → PhoneTrustCheck. */
+    phone: "/api/ui/phone",
+    /** GET → Labels; PATCH LabelsPatch (application/json) → Labels. 400 `malformed` /
+     *  `bad_label` / `bad_name`, 404 `not_found` (a session the store does not know), 413
+     *  `too_many` / `too_large`, 415 `json_only`. Every change is a `labels` stream frame. */
+    labels: "/api/ui/labels",
   },
   /** GET / DELETE /attachments/<id>.<ext>, UI key: the uploaded image itself (served
    *  `private, immutable`), and taking it back. */

@@ -3,6 +3,7 @@
 // subagents, an event backlog per session, and a tick that moves things along. Also the
 // knobs the Playwright tests turn (raise, clear, end, start).
 import type {
+  AgentRun,
   Attention,
   ControlActivity,
   MachineControl,
@@ -77,6 +78,12 @@ const REPOS = [
   ["github.com/spacesheep-dev/spacesheep", "feat/sink-backoff"],
 ];
 const HARNESSES = ["claude-code", "codex", "gemini-cli", "cursor"];
+const AGENT_TASKS = [
+  "Check cache invalidation",
+  "Profile the slow path",
+  "List untested branches",
+  "Find the flaky retry",
+];
 /** Accounts per harness; claude-code has two so the agents lane shows a group. */
 const ACCOUNTS: Record<string, { id: string; email: string }[]> = {
   "claude-code": [
@@ -118,6 +125,8 @@ function seeded(seed: number) {
 
 interface Rec {
   s: SessionSummary;
+  /** Subagents that run inside this session (Claude Code's shape). */
+  agents: AgentRun[];
   events: StoredEvent[];
   seq: number;
   turn: number;
@@ -191,8 +200,8 @@ export class World {
         repo: 0,
         account: 0,
       });
-      this.spawnSub(a, "Explore");
-      this.spawnSub(a, "Plan");
+      this.startAgent(a, "Explore", "Find the flush call sites");
+      this.startAgent(a, "Plan", "Draft the retry schedule");
       this.spawn({
         harness: "claude-code",
         machine: m(0),
@@ -232,8 +241,10 @@ export class World {
       at: now - 42 * 60_000,
       repo: 0,
     });
-    this.spawnSub(parent, "Explore");
-    this.spawnSub(parent, "Plan");
+    this.startAgent(parent, "Explore", "Find the flush call sites");
+    this.startAgent(parent, "Plan", "Draft the retry schedule");
+    const done = this.startAgent(parent, "general-purpose", "List the outbox's callers")!;
+    this.endAgent(parent, done, "Three callers: the tailer, the receiver's flush and the CLI's --drain.");
     this.spawn({
       harness: "codex",
       machine: m(1),
@@ -304,6 +315,9 @@ export class World {
         repo: i,
       });
     }
+    // Cursor sends a subagent as a session of its own (parent_id): merged as an agent.
+    const cursor = this.keys().find((k) => k.startsWith("cursor:"));
+    if (cursor) this.spawnSub(cursor, "Search");
     for (let i = 0; i < (opts.extra ?? 0); i++) {
       this.spawn({
         harness: pick(HARNESSES),
@@ -338,7 +352,31 @@ export class World {
 
   sessions(): Map<SessionKey, SessionSummary> {
     const out = new Map<SessionKey, SessionSummary>();
-    for (const [k, r] of this.recs) out.set(k, r.s);
+    for (const [k, r] of this.recs) {
+      // The server's reading: its own agents, and child sessions (parent_id) merged in.
+      const kids: AgentRun[] = [...this.recs.values()]
+        .filter((c) => c.s.parentId === r.s.id && c.s.harness === r.s.harness)
+        .map((c) => ({
+          id: c.s.id,
+          type: c.s.title,
+          state: c.s.state === "done" ? "done" : c.s.state === "stale" ? "stale" : "running",
+          startedAt: c.s.startedAt,
+          endedAt: c.s.endedAt,
+          lastAt: c.s.lastAt,
+          tools: c.s.counts.tools,
+          toolErrors: c.s.counts.toolErrors,
+          attributed: true,
+          currentTool: c.s.currentTool ? { tool: c.s.currentTool.tool, since: c.s.currentTool.since } : undefined,
+          recentTools: c.s.recentTools.slice(-4),
+          session: c.s.key,
+        }));
+      const all = [...r.agents, ...kids];
+      const open = all.filter((a) => a.state !== "done");
+      const ended = all.filter((a) => a.state === "done").reverse();
+      r.s.agents = [...open, ...ended].map((a) => ({ ...a }));
+      r.s.counts.agentsRunning = open.length;
+      out.set(k, r.s);
+    }
     return out;
   }
 
@@ -653,6 +691,7 @@ export class World {
     this.setState(r, "done");
     this.emit(r, "session.ended", { reason: "other" });
     for (const c of this.recs.values()) if (c.s.parentId === r.s.id && c.s.state !== "done") this.end(c.s.key);
+    for (const a of r.agents) if (a.state !== "done") this.endAgent(r.s.key, a.id);
     this.onChange();
   }
 
@@ -669,6 +708,47 @@ export class World {
     return key;
   }
 
+  /** A subagent inside the session (Claude Code's shape); returns its id. */
+  startAgent(parentKey: SessionKey, type = "Explore", description?: string): string | undefined {
+    const p = this.recs.get(parentKey);
+    if (!p) return undefined;
+    const id = `a${(++this.n).toString(16)}${Math.floor(rnd() * 1e6).toString(16)}`;
+    const now = Date.now();
+    const tool = pick(TOOLS[p.s.harness] ?? ["Read"]);
+    p.agents.push({
+      id,
+      type,
+      description,
+      callId: `toolu_agent_${this.n}`,
+      turnId: `t_${p.turn}`,
+      state: "running",
+      startedAt: iso(now - 40_000),
+      lastAt: iso(now),
+      tools: 2,
+      toolErrors: 0,
+      attributed: p.s.harness !== "codex",
+      currentTool: { tool, since: iso(now - 4000) },
+      recentTools: [{ tool: "Read", ok: true, ms: 300 }],
+    });
+    p.s.counts.subagents++;
+    this.emit(p, "subagent.started", { agent_id: id, agent_type: type });
+    this.onChange();
+    return id;
+  }
+
+  endAgent(parentKey: SessionKey, id: string, result?: string) {
+    const p = this.recs.get(parentKey);
+    const a = p?.agents.find((x) => x.id === id);
+    if (!p || !a || a.state === "done") return;
+    a.state = "done";
+    a.endedAt = iso(Date.now());
+    a.currentTool = undefined;
+    if (result) a.result = result;
+    this.emit(p, "subagent.ended", { agent_id: id, agent_type: a.type });
+    this.onChange();
+  }
+
+  /** A subagent that came as a session of its own (parent_id), merged into the parent's agents. */
   startSub(parentKey: SessionKey, type = "Explore"): SessionKey | undefined {
     const p = this.recs.get(parentKey);
     if (!p) return undefined;
@@ -711,11 +791,24 @@ export class World {
     }
     if (this.ticks % 17 === 8) {
       const w = this.keys("working").filter((k) => !this.recs.get(k)!.s.parentId);
-      if (w.length) this.startSub(pick(w), pick(["Explore", "Plan", "general-purpose"]));
+      if (w.length) this.startAgent(pick(w), pick(["Explore", "Plan", "general-purpose"]), pick(AGENT_TASKS));
     }
     if (this.ticks % 13 === 6) {
-      const subs = [...this.recs.values()].filter((r) => r.s.parentId && r.s.state !== "done");
-      if (subs.length > 2) this.end(pick(subs).s.key);
+      const open = [...this.recs.values()].flatMap((r) =>
+        r.agents.filter((a) => a.state !== "done").map((a) => [r.s.key, a.id] as const),
+      );
+      if (open.length > 2) {
+        const [k, id] = pick(open);
+        this.endAgent(k, id, "Done: two call sites changed, tests pass.");
+      }
+    }
+    for (const r of this.recs.values()) {
+      for (const a of r.agents) {
+        if (a.state !== "running" || !a.attributed || rnd() > 0.4) continue;
+        a.tools++;
+        a.currentTool = { tool: pick(TOOLS[r.s.harness] ?? ["Read"]), since: iso(now) };
+        a.lastAt = iso(now);
+      }
     }
     this.onChange();
   }
@@ -776,12 +869,14 @@ export class World {
         compactions: 0,
         filesChanged: 0,
         attentions: 0,
+        agentsRunning: 0,
       },
       openAttentions: [],
       children: 0,
+      agents: [],
       recentTools: [],
     };
-    const r: Rec = { s, events: [], seq: 0, turn: 0, prose: pick(PROSE), proseAt: 0 };
+    const r: Rec = { s, agents: [], events: [], seq: 0, turn: 0, prose: pick(PROSE), proseAt: 0 };
     this.recs.set(key, r);
     // A backlog so the expanded window has something to show.
     let t = o.at;

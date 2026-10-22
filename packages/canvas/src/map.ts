@@ -1,43 +1,41 @@
 // SPDX-License-Identifier: Apache-2.0
-// The infrastructure around the sessions, as nodes in horizontal lanes top → bottom:
-// devices (browsers looking at this GUI, passkeys the machines trust), a small hub for
-// the GUI itself, agents (harness × account), then the session windows, machines, and
-// the repos they work in. Lines: device → hub, account → the machines it runs on, live
-// session → its machine and its repo. Hand-drawn nodes and links sit beside them.
-// Everything here is positioned with transforms; the DOM is rebuilt only when the set
-// of nodes changes, lines are redrawn when something moved.
+// The Map view: the infrastructure around the sessions, in lanes from the top: devices
+// (browsers on this GUI, grouped by name, and the passkeys machines trust), agents (one
+// node per harness; an account only when it has an email), machines with their sessions
+// as small rows under them, and the repos those work in. Lines show only for what is
+// hovered. Hand-drawn nodes and links are the person's, kept in the canvas document.
+// Everything is positioned with transforms; the DOM is rebuilt only when the set of
+// nodes changes, lines are redrawn when something moved.
 import type { ThemeApi, ThemeSnapshot } from "@sessionpipe-gui/theme-types";
-import type { SessionKey, SessionSummary } from "@sessionpipe-gui/theme-types/api";
-import { bounds, findFree, type Rect } from "./layout";
-import { type CustomNode, LANE_GAP, type Layout, type Link, NODE_GAP, NODE_H } from "./types";
+import type { SessionKey, SessionState, SessionSummary } from "@sessionpipe-gui/theme-types/api";
+import { findFree, type Rect } from "./layout";
+import { type CustomNode, LANE_GAP, type Link, type MapDoc, NODE_GAP, NODE_H, ROW_H, ROW_W } from "./types";
 import { el, oneLine, setClass, setText, svg } from "./util";
 
-export type NodeKind = "device" | "hub" | "agent" | "machine" | "repo" | "custom";
+export type NodeKind = "device" | "agent" | "machine" | "repo" | "custom";
 
 export interface Chip {
   id: string;
   harness: string;
   accountId: string;
   label: string;
-  /** Offset within the node, measured once. */
-  x: number;
-  w: number;
 }
 
 export interface MapNode {
   id: string;
   kind: NodeKind;
-  /** 0 devices, 1 hub, 2 agents, 3 machines, 4 storage; -1 custom (free). */
+  /** 0 devices, 1 agents, 2 machines, 3 repos; -1 custom (free). */
   lane: number;
   label: string;
   sub?: string;
   chips?: Chip[];
+  /** The harness's own start chip (the node itself drags onto a machine). */
+  start?: Chip;
   machine?: string;
   machineId?: string;
   online?: boolean;
-  needs?: boolean;
   current?: boolean;
-  strength?: "needs" | "working" | "stale" | "idle";
+  strength?: SessionState;
   x: number;
   y: number;
   w: number;
@@ -48,48 +46,43 @@ export interface MapNode {
 interface Edge {
   a: string;
   b: string;
-  kind: "device" | "agent" | "session" | "custom";
+  kind: "agent" | "session" | "custom";
   id?: string;
-  /** The session's state, for coloured highlights. */
-  state?: string;
 }
 
 export interface MapHost {
   api: ThemeApi;
   root: HTMLElement;
-  world: HTMLElement;
   tethers: SVGSVGElement;
-  layout(): Layout;
+  doc(): MapDoc;
   snapshot(): ThemeSnapshot;
-  /** Live, visible, top-level session windows with their absolute rects. */
-  liveWindows(): { session: SessionSummary; rect: Rect }[];
+  /** The sessions shown as rows, in order. */
+  sessions(): SessionSummary[];
   toScreen(wx: number, wy: number): { x: number; y: number };
   request(): void;
-  save(): void;
+  /** The person changed the map: write it. */
+  commit(): void;
   /** A start was accepted: the session the host named will appear by that machine. */
   onStarted(session: SessionKey, machineNodeId: string): void;
-  /** A phone: lanes wrap their nodes into rows instead of one long band. */
   narrow(): boolean;
-  /** Everything that already occupies world space, for placing a new node. */
-  taken(): Rect[];
 }
 
-export const LANES = ["devices", "", "agents", "machines", "storage"] as const;
-const HUB_H = 28;
-/** How far outside a lane its bus runs. */
-const BUS_GAP = 14;
+export const LANES = ["Devices", "Agents", "Machines", "Repos"] as const;
 const MIN_LANE_W = 960;
-const LANE_PAD = 80;
+const PAD = 16;
+const ROW_STEP = ROW_H + 6;
 
 export class MapLayer {
   readonly lanesEl: HTMLElement;
   readonly nodesEl: HTMLElement;
-  /** Hand-drawn nodes sit above the windows: they are annotations. */
+  /** Hand-drawn nodes sit above everything: they are annotations. */
   readonly customEl: HTMLElement;
   private edgesG: SVGGElement;
   private tempLine: SVGLineElement;
   private laneEls: HTMLElement[] = [];
   nodes = new Map<string, MapNode>();
+  /** Where each session row goes (world), from the last layout. */
+  rows = new Map<SessionKey, Rect>();
   private edges: Edge[] = [];
   private sig = "";
   private focus: string | null = null;
@@ -99,7 +92,7 @@ export class MapLayer {
   private pop: HTMLElement | undefined;
   private linkFrom: string | undefined;
   private laneRect: Rect = { x: 0, y: 0, w: 0, h: 0 };
-  private rows: { y: number; h: number }[] = [];
+  private laneRows: { y: number; h: number }[] = [];
   private editing: string | undefined;
 
   constructor(private host: MapHost) {
@@ -112,25 +105,25 @@ export class MapLayer {
     host.tethers.append(this.edgesG, this.tempLine);
     for (const name of LANES) {
       const lane = el("div", "cv-lane");
-      lane.dataset.lane = name;
+      lane.dataset.lane = name.toLowerCase();
       lane.append(el("span", "cv-lane-l", name));
       this.lanesEl.append(lane);
       this.laneEls.push(lane);
     }
-    this.lanesEl.hidden = true;
-    this.nodesEl.hidden = true;
-    this.customEl.hidden = true;
+    this.setOn(false);
+  }
+
+  get on() {
+    return !this.lanesEl.hidden;
   }
 
   setOn(on: boolean) {
     this.lanesEl.hidden = !on;
     this.nodesEl.hidden = !on;
     this.customEl.hidden = !on;
+    this.edgesG.style.display = on ? "" : "none";
     if (on) this.sig = "";
-    if (!on) {
-      this.edgesG.replaceChildren();
-      this.lineEls.clear();
-      this.trunkEls.clear();
+    else {
       this.closePopover();
       this.setFocus(null);
     }
@@ -138,46 +131,42 @@ export class MapLayer {
 
   // ---------- nodes from the snapshot ----------
 
-  /** Rebuild the node set when it changed; always returns whether a redraw is due. */
-  build(): boolean {
+  /** Rebuild the node set when it changed. */
+  build(): void {
     const s = this.host.snapshot();
-    const lay = this.host.layout();
+    const doc = this.host.doc();
+    const api = this.host.api;
     const want: Omit<MapNode, "x" | "y" | "w" | "h" | "el">[] = [];
 
-    // Devices: every browser on the stream, then the passkeys machines trust.
+    // Devices: the browsers on the stream, one node per name ("you" once), then the
+    // passkeys machines trust that are no browser here.
+    const byLabel = new Map<string, { current: boolean; n: number }>();
     for (const v of s.viewers) {
+      const label = v.label || v.device;
+      const g = byLabel.get(label) ?? { current: false, n: 0 };
+      g.current ||= !!v.current;
+      g.n++;
+      byLabel.set(label, g);
+    }
+    for (const [label, g] of byLabel) {
       want.push({
-        id: `dev:${v.id}`,
+        id: `dev:${label}`,
         kind: "device",
         lane: 0,
-        label: v.label || v.device,
-        sub: v.current ? "you" : v.loopback ? "this machine" : [v.device, v.ip].filter(Boolean).join(" · "),
-        current: v.current,
+        label,
+        sub: g.current ? "you" : undefined,
+        current: g.current,
       });
     }
-    const keys = new Map<string, string[]>();
-    for (const m of s.machines.values()) {
-      for (const k of m.control?.keys ?? []) {
-        const name = k.name?.trim();
-        if (!name) continue;
-        const list = keys.get(name) ?? [];
-        list.push(m.name);
-        keys.set(name, list);
-      }
+    const keys = new Set<string>();
+    for (const m of s.machines.values())
+      for (const k of m.control?.keys ?? []) if (k.name?.trim()) keys.add(k.name.trim());
+    for (const name of keys) {
+      if (byLabel.has(name)) continue;
+      want.push({ id: `dev:key:${name}`, kind: "device", lane: 0, label: name, sub: "passkey" });
     }
-    for (const [name, machines] of keys) {
-      if ([...s.viewers].some((v) => v.label === name)) continue;
-      want.push({
-        id: `dev:key:${name}`,
-        kind: "device",
-        lane: 0,
-        label: name,
-        sub: `passkey · ${machines.join(", ")}`,
-      });
-    }
-    want.push({ id: "hub", kind: "hub", lane: 1, label: this.host.api.host.name, sub: this.host.api.host.version });
 
-    // Agents: one group per harness with a chip per account seen in its sessions.
+    // Agents: one node per harness; an account is named only by its email.
     const emails = new Map<string, string>();
     for (const m of s.machines.values()) {
       for (const a of m.control?.accounts ?? []) if (a.email) emails.set(`${a.harness}:${a.id}`, a.email);
@@ -188,138 +177,101 @@ export class MapLayer {
       const g = groups.get(sess.harness) ?? new Map<string, Chip>();
       groups.set(sess.harness, g);
       if (sess.accountId && !g.has(sess.accountId)) {
-        const id = `acct:${sess.harness}:${sess.accountId}`;
         g.set(sess.accountId, {
-          id,
+          id: `acct:${sess.harness}:${sess.accountId}`,
           harness: sess.harness,
           accountId: sess.accountId,
-          label: emails.get(`${sess.harness}:${sess.accountId}`) ?? sess.accountId.slice(0, 8),
-          x: 0,
-          w: 0,
+          label: emails.get(`${sess.harness}:${sess.accountId}`) ?? "",
         });
       }
     }
-    for (const [harness, chips] of [...groups].sort((a, b) => a[0].localeCompare(b[0]))) {
+    for (const [harness, accounts] of [...groups].sort((a, b) => a[0].localeCompare(b[0]))) {
+      const name = harnessName(api, harness);
+      const all = [...accounts.values()];
+      const first = all[0];
       want.push({
         id: `agent:${harness}`,
         kind: "agent",
-        lane: 2,
-        label: harnessShort(harness),
-        chips: [...chips.values()],
+        lane: 1,
+        label: name,
+        sub: all.length > 1 ? `${all.length} accounts` : undefined,
+        chips: all.filter((c) => c.label),
+        start: { id: `start:${harness}`, harness, accountId: first?.accountId ?? "", label: name },
       });
     }
 
-    // Machines.
+    // Machines, with the strongest state of their sessions as the one glyph.
+    const order: SessionState[] = ["needs_you", "working", "stale", "idle"];
     for (const m of [...s.machines.values()].sort((a, b) => a.name.localeCompare(b.name))) {
       const c = m.control;
-      const versions = Object.entries(m.harnesses)
-        .filter(([, v]) => v)
-        .map(([h, v]) => `${this.host.api.format.monogram(h)} ${v}`)
-        .join(" · ");
-      const sub = c ? (c.online ? versions || "online" : "offline") : "not paired";
-      // The dot takes the strongest state of the machine's sessions.
-      let strength: "needs" | "working" | "stale" | "idle" = "idle";
+      let strength: SessionState = "idle";
       for (const sess of s.sessions.values()) {
-        if (sess.machine !== m.name || sess.parentId) continue;
-        if (sess.state === "needs_you") strength = "needs";
-        else if (sess.state === "working" && strength !== "needs") strength = "working";
-        else if (sess.state === "stale" && strength === "idle") strength = "stale";
+        if (sess.machine !== m.name || sess.parentId || sess.state === "done") continue;
+        if (order.indexOf(sess.state) < order.indexOf(strength)) strength = sess.state;
       }
       want.push({
         id: `machine:${m.name}`,
         kind: "machine",
-        lane: 3,
+        lane: 2,
         label: m.name,
-        sub,
+        sub: c && !c.online ? "offline" : undefined,
         machine: m.name,
         machineId: c?.machineId,
         online: !!c?.online,
-        needs: m.needsYou > 0,
         strength,
       });
     }
 
-    // Storage: one node per repo.
-    const repos = new Map<string, string>();
+    // Repos: the short name; the host only when two repos share it.
+    const repos = new Map<string, Set<string>>();
     for (const sess of s.sessions.values()) {
       if (!sess.repo) continue;
       const { short, host } = repoParts(sess.repo);
-      repos.set(short, host);
+      const set = repos.get(short) ?? new Set<string>();
+      set.add(host);
+      repos.set(short, set);
     }
-    for (const [short, host] of [...repos].sort((a, b) => a[0].localeCompare(b[0]))) {
-      want.push({ id: `repo:${short}`, kind: "repo", lane: 4, label: short, sub: host });
+    for (const [short, hosts] of [...repos].sort((a, b) => a[0].localeCompare(b[0]))) {
+      want.push({
+        id: `repo:${short}`,
+        kind: "repo",
+        lane: 3,
+        label: short,
+        sub: hosts.size > 1 ? "several hosts" : undefined,
+      });
     }
 
     // Hand-drawn. A node left without a label (an edit the page never finished) goes.
-    for (const c of Object.values(lay.custom ?? {})) {
-      if (!c.label?.trim() && c.id !== this.editing) {
-        delete lay.custom![c.id];
-        lay.links = (lay.links ?? []).filter((k) => k.from !== c.id && k.to !== c.id);
-        continue;
-      }
+    for (const c of Object.values(doc.custom)) {
+      if (!c.label?.trim() && c.id !== this.editing) continue;
       want.push({ id: c.id, kind: "custom", lane: -1, label: c.label });
     }
-    // Positions of nodes that are gone (a viewer that reconnected has a new id).
-    if (lay.nodes) {
-      const ids = new Set(want.map((n) => n.id));
-      for (const id of Object.keys(lay.nodes)) if (!ids.has(id)) delete lay.nodes[id];
-    }
 
-    // Chips in the order of the windows they connect to, so lines don't cross.
-    const wins = this.host.liveWindows();
-    const cx = (sess: SessionSummary) => {
-      const w = wins.find((x) => x.session.key === sess.key);
-      return w ? w.rect.x + w.rect.w / 2 : undefined;
-    };
-    for (const n of want) {
-      if (!n.chips?.length) continue;
-      const bary = new Map<string, number>();
-      for (const c of n.chips) {
-        const xs: number[] = [];
-        for (const sess of s.sessions.values()) {
-          if (sess.parentId || sess.harness !== c.harness || sess.accountId !== c.accountId) continue;
-          const x = cx(sess);
-          if (x !== undefined) xs.push(x);
-        }
-        bary.set(c.id, xs.length ? xs.reduce((a, b) => a + b, 0) / xs.length : Number.POSITIVE_INFINITY);
-      }
-      n.chips.sort((a, b) => bary.get(a.id)! - bary.get(b.id)!);
-    }
     const sig = want
       .map((n) =>
-        [n.id, n.label, n.sub, n.online, n.needs, n.current, n.strength, n.chips?.map((c) => c.label).join("|")].join(
-          "\u0002",
-        ),
+        [n.id, n.label, n.sub, n.online, n.current, n.strength, n.chips?.map((c) => c.label).join("|")].join("\u0002"),
       )
       .join("\u0001");
     // Widths come from the DOM, so a build while the layer is hidden must run again
     // once it shows (setOn clears the signature).
-    const hidden = this.nodesEl.hidden;
-    const changed = sig !== this.sig;
-    if (changed) {
-      this.sig = hidden ? "" : sig;
+    if (sig !== this.sig) {
+      this.sig = this.nodesEl.hidden ? "" : sig;
       const seen = new Set<string>();
       for (const n of want) {
         seen.add(n.id);
         let node = this.nodes.get(n.id);
         if (!node) {
-          const e = this.nodeEl(n);
+          const e = el("div", `cv-node cv-node-${n.kind}`);
+          e.dataset.id = n.id;
+          e.dataset.kind = n.kind;
+          e.tabIndex = 0;
           (n.kind === "custom" ? this.customEl : this.nodesEl).append(e);
           node = { ...n, x: 0, y: 0, w: 0, h: NODE_H, el: e };
           this.nodes.set(n.id, node);
-        } else {
-          Object.assign(node, n);
-          this.fillNode(node);
-        }
+        } else Object.assign(node, n);
+        this.fillNode(node);
         node.w = node.el.offsetWidth || node.w;
         node.h = node.el.offsetHeight || NODE_H;
-        for (const c of node.chips ?? []) {
-          const ce = node.el.querySelector(`[data-chip="${CSS.escape(c.id)}"]`) as HTMLElement | null;
-          if (ce) {
-            c.x = ce.offsetLeft;
-            c.w = ce.offsetWidth;
-          }
-        }
       }
       for (const [id, node] of this.nodes) {
         if (!seen.has(id)) {
@@ -329,49 +281,27 @@ export class MapLayer {
         }
       }
     }
-    this.edges = this.computeEdges();
-    return changed;
-  }
-
-  private nodeEl(n: Omit<MapNode, "x" | "y" | "w" | "h" | "el">): HTMLElement {
-    const e = el("div", `cv-node cv-node-${n.kind}`);
-    e.dataset.id = n.id;
-    e.dataset.kind = n.kind;
-    e.tabIndex = 0;
-    const node = { ...n, x: 0, y: 0, w: 0, h: NODE_H, el: e };
-    this.fillNode(node);
-    return e;
   }
 
   private fillNode(n: MapNode) {
     const e = n.el;
     e.replaceChildren();
-    if (n.kind === "machine") {
-      const dot = el("span", "cv-node-dot");
-      setClass(dot, "is-on", !!n.online);
-      dot.dataset.s = n.strength ?? "idle";
-      e.append(dot);
-    }
+    if (n.kind === "machine") e.append(el("span", `dot dot--${n.strength ?? "idle"} cv-node-glyph`));
     if (n.kind === "custom") {
       const l = el("span", "cv-node-l cv-node-edit", n.label);
       l.spellcheck = false;
       e.append(l);
-    } else {
-      e.append(el("span", "cv-node-l", n.label));
-    }
+    } else e.append(el("span", "cv-node-l", n.label));
     if (n.sub) e.append(el("span", "cv-node-s", n.sub));
-    if (n.needs) {
-      const nd = el("span", "cv-node-needs");
-      nd.title = "A session here needs you";
-      e.append(nd);
-    }
     for (const c of n.chips ?? []) {
       const chip = el("span", "cv-chip-a", c.label);
       chip.dataset.chip = c.id;
-      chip.dataset.harness = c.harness;
-      chip.dataset.account = c.accountId;
       chip.title = `${c.label} · drag onto a machine to start a session`;
       e.append(chip);
+    }
+    if (n.start) {
+      e.dataset.chip = n.start.id;
+      e.title = `Drag onto a machine to start a ${n.label} session`;
     }
     const h = el("span", "cv-node-h");
     h.title = "Drag to another node to link";
@@ -383,38 +313,41 @@ export class MapLayer {
 
   // ---------- geometry ----------
 
-  /** Lanes are as wide as the sessions (at least MIN_LANE_W) and their nodes pack into
-   *  rows inside that width, so nothing can leave its lane: a node keeps the x it was
-   *  dragged to while it fits on its row, and wraps when it does not. Positions are
-   *  relative to the lane's left edge (`lanes.x`); a stored x outside the lane is dropped. */
-  layoutNodes(): void {
-    const lay = this.host.layout();
-    const wins = this.host.liveWindows();
-    const b = bounds(wins.map((w) => w.rect)) ?? { x: -300, y: -120, w: 600, h: 240 };
-    if (!lay.lanes || lay.lanes.x === undefined) lay.lanes = this.defaultLanes(b);
-    lay.nodes ??= {};
+  /** Lanes from the origin down: devices and agents above the machines, each machine's
+   *  sessions as rows under it, the repos below the tallest column. A node keeps the x it
+   *  was dragged to along its lane while it fits; the rest pack from the left. */
+  layout(): void {
+    const doc = this.host.doc();
     const narrow = this.host.narrow();
-    const W = narrow ? Math.max(b.w, 360) : Math.max(MIN_LANE_W, b.w + LANE_PAD * 2);
-    const PAD = 12;
     const ROW = NODE_H + 8;
-    const laneX = lay.lanes.x;
+    const sessions = this.host.sessions();
+    const byMachine = new Map<string, SessionSummary[]>();
+    for (const s of sessions) {
+      const id = s.machine && this.nodes.has(`machine:${s.machine}`) ? `machine:${s.machine}` : "machine:";
+      const list = byMachine.get(id) ?? [];
+      list.push(s);
+      byMachine.set(id, list);
+    }
+    // The machine lane sets the width: each machine a slot as wide as its rows.
+    const machines = [...this.nodes.values()].filter((n) => n.lane === 2);
+    const slot = (n: MapNode) => Math.max(n.w, ROW_W);
+    const machinesW = machines.reduce((w, n) => w + slot(n) + NODE_GAP, PAD) + (byMachine.has("machine:") ? ROW_W : 0);
+    const W = narrow ? Math.max(360, ROW_W + PAD * 2) : Math.max(MIN_LANE_W, machinesW + PAD);
 
-    // Pack each lane: stored positions first, in x order, each kept where it fits.
     const placed = new Map<string, { x: number; row: number }>();
     const rowsOf: number[] = [];
     for (let lane = 0; lane < LANES.length; lane++) {
       const members = [...this.nodes.values()].filter((n) => n.lane === lane);
+      const width = (n: MapNode) => (lane === 2 ? slot(n) : n.w);
       const stored = (n: MapNode) => {
-        const st = lay.nodes?.[n.id];
-        if (!st || !Number.isFinite(st.x) || st.x < 0 || st.x + n.w > W - PAD) return undefined;
+        const st = doc.nodes[n.id];
+        if (!st || !Number.isFinite(st.x) || st.x < 0 || st.x + width(n) > W - PAD) return undefined;
         return st.x;
       };
-      const bary = new Map(members.map((n) => [n.id, this.barycenter(n.id)]));
       members.sort((p, q) => {
         const a = stored(p);
         const c = stored(q);
-        if (a === undefined && c === undefined)
-          return bary.get(p.id)! - bary.get(q.id)! || p.label.localeCompare(q.label);
+        if (a === undefined && c === undefined) return p.label.localeCompare(q.label);
         if (a === undefined) return 1;
         if (c === undefined) return -1;
         return a - c;
@@ -423,36 +356,59 @@ export class MapLayer {
       let row = 0;
       for (const n of members) {
         const want = stored(n);
-        // Kept where it was dragged when that is further along the row and fits; else
-        // the next slot; a full row wraps and the node starts the next one.
-        let x = want !== undefined && want >= cursor && want + n.w <= W - PAD ? want : cursor;
-        if (x + n.w > W - PAD && cursor > PAD) {
+        let x = want !== undefined && want >= cursor && want + width(n) <= W - PAD ? want : cursor;
+        // A full row wraps (a phone's machines stack too).
+        if (x + width(n) > W - PAD && cursor > PAD) {
           row++;
           cursor = PAD;
           x = PAD;
         }
         placed.set(n.id, { x, row });
-        if (want === undefined || want !== x) lay.nodes[n.id] = { x };
-        cursor = x + n.w + NODE_GAP;
+        cursor = x + width(n) + NODE_GAP;
       }
       rowsOf[lane] = row + 1;
     }
-    const laneH = (lane: number) => (lane === 1 ? HUB_H + 12 : rowsOf[lane]! * ROW + 20);
-    const { top, bottom } = lay.lanes;
+    const laneH = (lane: number) => rowsOf[lane]! * ROW + 28;
     const gap = narrow ? LANE_GAP - 16 : LANE_GAP;
-    const agentsY = top - laneH(2);
-    const hubY = agentsY - gap - laneH(1);
-    const devicesY = hubY - gap - laneH(0);
-    this.rows = [
+    // Machines at y = 0; their session rows under each one.
+    const machinesY = 0;
+    const agentsY = machinesY - gap - laneH(1);
+    const devicesY = agentsY - gap - laneH(0);
+    const rowsTop = machinesY + laneH(2) + 12;
+    this.rows.clear();
+    let bottom = rowsTop;
+    const columns: [string, number][] = machines.map((n) => [n.id, (placed.get(n.id)?.x ?? PAD) + 0]);
+    if (byMachine.has("machine:")) columns.push(["machine:", machinesW - ROW_W]);
+    if (narrow) {
+      // A phone: one column of rows, machine by machine.
+      let y = rowsTop;
+      for (const [id] of columns) {
+        for (const s of byMachine.get(id) ?? []) {
+          this.rows.set(s.key, { x: PAD, y, w: W - PAD * 2, h: ROW_H });
+          y += ROW_STEP;
+        }
+      }
+      bottom = y;
+    } else {
+      for (const [id, x] of columns) {
+        let y = rowsTop;
+        for (const s of byMachine.get(id) ?? []) {
+          this.rows.set(s.key, { x, y, w: ROW_W, h: ROW_H });
+          y += ROW_STEP;
+        }
+        bottom = Math.max(bottom, y);
+      }
+    }
+    const reposY = bottom + gap;
+    this.laneRows = [
       { y: devicesY, h: laneH(0) },
-      { y: hubY, h: laneH(1) },
-      { y: agentsY, h: laneH(2) },
-      { y: bottom, h: laneH(3) },
-      { y: bottom + laneH(3) + gap, h: laneH(4) },
+      { y: agentsY, h: laneH(1) },
+      { y: machinesY, h: laneH(2) },
+      { y: reposY, h: laneH(3) },
     ];
     for (const n of this.nodes.values()) {
       if (n.kind === "custom") {
-        const c = lay.custom?.[n.id];
+        const c = doc.custom[n.id];
         if (c) {
           n.x = c.x;
           n.y = c.y;
@@ -461,32 +417,18 @@ export class MapLayer {
       }
       const p = placed.get(n.id);
       if (!p) continue;
-      const row = this.rows[n.lane]!;
-      n.x = laneX + p.x;
-      n.y = row.y + (n.lane === 1 ? (row.h - n.h) / 2 : 10 + p.row * ROW);
+      const row = this.laneRows[n.lane]!;
+      n.x = p.x;
+      n.y = row.y + 22 + p.row * ROW;
     }
-    const last = this.rows[4]!;
-    this.laneRect = { x: laneX, y: devicesY, w: W, h: last.y + last.h - devicesY };
+    const last = this.laneRows[3]!;
+    this.laneRect = { x: 0, y: devicesY, w: W, h: last.y + last.h - devicesY };
+    this.edges = this.computeEdges();
   }
 
   /** Where the lanes are, for Fit. */
   laneBounds(): Rect | null {
-    return this.lanesEl.hidden ? null : this.laneRect;
-  }
-
-  private defaultLanes(b: Rect): { x: number; top: number; bottom: number } {
-    const narrow = this.host.narrow();
-    const w = narrow ? Math.max(b.w, 360) : Math.max(MIN_LANE_W, b.w + LANE_PAD * 2);
-    return { x: b.x - (narrow ? 0 : (w - b.w) / 2), top: b.y - LANE_GAP - 8, bottom: b.y + b.h + LANE_GAP + 8 };
-  }
-
-  /** Tidy: lanes hug the windows again and the nodes pack from the left. */
-  relayout() {
-    const lay = this.host.layout();
-    const b = bounds(this.host.liveWindows().map((w) => w.rect));
-    lay.lanes = this.defaultLanes(b ?? { x: -300, y: -120, w: 600, h: 240 });
-    lay.nodes = {};
-    this.layoutNodes();
+    return this.on ? this.laneRect : null;
   }
 
   nodeRect(id: string): Rect | null {
@@ -496,109 +438,80 @@ export class MapLayer {
 
   private chipRect(chipId: string): Rect | null {
     for (const n of this.nodes.values()) {
+      if (n.start?.id === chipId) return this.nodeRect(n.id);
       const c = n.chips?.find((c) => c.id === chipId);
-      if (c) return { x: n.x + c.x, y: n.y, w: c.w, h: n.h };
+      if (c) {
+        const ce = n.el.querySelector(`[data-chip="${CSS.escape(c.id)}"]`) as HTMLElement | null;
+        return { x: n.x + (ce?.offsetLeft ?? 0), y: n.y, w: ce?.offsetWidth ?? n.w, h: n.h };
+      }
     }
     return null;
   }
 
-  /** Any endpoint: a node, an account chip, or a session window. */
+  /** Any endpoint: a node, an account chip, or a session row. */
   private endRect(id: string): Rect | null {
-    if (id.startsWith("win:")) {
-      const key = id.slice(4);
-      return this.host.liveWindows().find((w) => w.session.key === key)?.rect ?? null;
-    }
-    if (id.startsWith("acct:")) return this.chipRect(id);
+    if (id.startsWith("win:")) return this.rows.get(id.slice(4)) ?? null;
+    if (id.startsWith("acct:") || id.startsWith("start:")) return this.chipRect(id);
     return this.nodeRect(id);
   }
 
   moveNode(id: string, x: number, y: number) {
     const n = this.nodes.get(id);
     if (!n) return;
-    const lay = this.host.layout();
+    const doc = this.host.doc();
     if (n.kind === "custom") {
-      const c = lay.custom?.[id];
+      const c = doc.custom[id];
       if (c) {
-        c.x = x;
-        c.y = y;
+        c.x = Math.round(x);
+        c.y = Math.round(y);
       }
       n.x = x;
       n.y = y;
     } else {
-      lay.nodes ??= {};
-      const laneX = lay.lanes?.x ?? 0;
-      const W = this.laneRect.w;
-      const rel = Math.max(12, Math.min(W - 12 - n.w, x - laneX));
-      lay.nodes[id] = { x: rel };
-      n.x = laneX + rel;
+      const rel = Math.max(PAD, Math.min(this.laneRect.w - PAD - n.w, x));
+      doc.nodes[id] = { x: Math.round(rel) };
+      this.layout();
     }
+    this.host.request();
   }
 
   // ---------- edges ----------
 
   private computeEdges(): Edge[] {
-    const lay = this.host.layout();
+    const doc = this.host.doc();
     const edges: Edge[] = [];
-    for (const n of this.nodes.values()) if (n.kind === "device") edges.push({ a: n.id, b: "hub", kind: "device" });
-    for (const { session } of this.host.liveWindows()) {
-      const from = `win:${session.key}`;
-      // Up to the account it runs as (or its harness when the account is unknown).
-      const chip = session.accountId ? `acct:${session.harness}:${session.accountId}` : undefined;
-      if (chip && this.chipRect(chip)) edges.push({ a: from, b: chip, kind: "agent", state: session.state });
-      else if (this.nodes.has(`agent:${session.harness}`))
-        edges.push({ a: from, b: `agent:${session.harness}`, kind: "agent", state: session.state });
-      if (session.machine && this.nodes.has(`machine:${session.machine}`)) {
-        edges.push({ a: from, b: `machine:${session.machine}`, kind: "session", state: session.state });
-      }
-      if (session.repo) {
-        const id = `repo:${repoParts(session.repo).short}`;
-        if (this.nodes.has(id)) edges.push({ a: from, b: id, kind: "session", state: session.state });
+    for (const s of this.host.sessions()) {
+      if (!this.rows.has(s.key)) continue;
+      const from = `win:${s.key}`;
+      const chip = s.accountId ? `acct:${s.harness}:${s.accountId}` : undefined;
+      if (chip && this.chipRect(chip)) edges.push({ a: from, b: chip, kind: "agent" });
+      else if (this.nodes.has(`agent:${s.harness}`)) edges.push({ a: from, b: `agent:${s.harness}`, kind: "agent" });
+      if (s.repo) {
+        const id = `repo:${repoParts(s.repo).short}`;
+        if (this.nodes.has(id)) edges.push({ a: from, b: id, kind: "session" });
       }
     }
-    for (const l of lay.links ?? []) edges.push({ a: l.from, b: l.to, kind: "custom", id: l.id });
+    for (const l of doc.links) edges.push({ a: l.from, b: l.to, kind: "custom", id: l.id });
     return edges;
-  }
-
-  /** Mean x of the windows an endpoint connects to; nodes pack in that order. */
-  private barycenter(id: string): number {
-    const xs: number[] = [];
-    for (const e of this.edges) {
-      if (e.kind === "custom") continue;
-      const other = e.b === id ? e.a : e.a === id ? e.b : undefined;
-      if (!other) continue;
-      const r = this.endRect(other);
-      if (r) xs.push(r.x + r.w / 2);
-    }
-    if (id.startsWith("agent:")) {
-      // A group follows its chips.
-      const n = this.nodes.get(id);
-      for (const c of n?.chips ?? []) {
-        const b = this.barycenter(c.id);
-        if (Number.isFinite(b)) xs.push(b);
-      }
-    }
-    return xs.length ? xs.reduce((a, b) => a + b, 0) / xs.length : Number.POSITIVE_INFINITY;
   }
 
   /** Lines and lanes from the current rects. Called from the frame when anything moved. */
   draw() {
-    if (this.lanesEl.hidden) return;
+    if (!this.on) return;
     for (let i = 0; i < LANES.length; i++) {
       const lane = this.laneEls[i]!;
-      const row = this.rows[i]!;
+      const row = this.laneRows[i];
+      if (!row) continue;
       lane.style.transform = `translate3d(${this.laneRect.x}px, ${row.y}px, 0)`;
       lane.style.width = `${this.laneRect.w}px`;
       lane.style.height = `${row.h}px`;
     }
     for (const n of this.nodes.values()) n.el.style.transform = `translate3d(${n.x}px, ${n.y}px, 0)`;
 
-    // Orthogonal routing: an edge leaves its source straight (down to a machine or repo,
-    // up to an account), reaches a bus a few px outside the target's lane, runs along it
-    // and joins the target's trunk; every edge to one target shares the bus and the
-    // trunk, so N sessions → one machine draw as one bundle. Paths are kept across
-    // frames and only get new geometry when an end moved.
+    // Orthogonal: a line leaves its row straight up (to its agent) or down (to its repo),
+    // turns once onto the target's centre. Paths are kept across frames and only get new
+    // geometry when an end moved.
     const seen = new Set<string>();
-    const trunks = new Map<string, { x: number; busY: number; ty: number; up: boolean; lit?: boolean }>();
     for (const e of this.edges) {
       const a = this.endRect(e.a);
       const b = this.endRect(e.b);
@@ -610,27 +523,21 @@ export class MapLayer {
         d = `M${a.x + a.w / 2},${a.y + a.h / 2} L${b.x + b.w / 2},${b.y + b.h / 2}`;
       } else {
         const up = b.y + b.h <= a.y;
-        const lane = this.laneOf(e.b);
-        const row = lane >= 0 ? this.rows[lane]! : null;
-        const busY = row ? (up ? row.y + row.h + BUS_GAP : row.y - BUS_GAP) : up ? b.y + b.h + BUS_GAP : b.y - BUS_GAP;
-        // Machine and repo drops sit a little apart so they don't overlap under a window.
-        const dx = e.kind === "session" && e.b.startsWith("repo:") ? 5 : e.kind === "session" ? -5 : 0;
-        const sx = a.x + a.w / 2 + dx;
+        const sx = a.x + 12;
         const sy = up ? a.y : a.y + a.h;
         const tx = b.x + b.w / 2;
         const ty = up ? b.y + b.h : b.y;
+        const mid = up ? ty + 12 : ty - 12;
         d = orthoPath([
           [sx, sy],
-          [sx, busY],
-          [tx, busY],
+          [sx, mid],
+          [tx, mid],
+          [tx, ty],
         ]);
-        const t = trunks.get(e.b);
-        if (!t) trunks.set(e.b, { x: tx, busY, ty, up });
       }
       let rec = this.lineEls.get(key);
       if (!rec) {
         const line = svg("path", { class: `cv-edge cv-edge-${e.kind}`, "data-a": e.a, "data-b": e.b });
-        if (e.state) line.dataset.state = e.state;
         let hit: SVGPathElement | undefined;
         if (e.kind === "custom" && e.id) {
           line.dataset.link = e.id;
@@ -641,7 +548,7 @@ export class MapLayer {
         this.lineEls.set(key, rec);
         this.edgesG.append(line);
         if (hit) this.edgesG.append(hit);
-      } else if (e.state && rec.line.dataset.state !== e.state) rec.line.dataset.state = e.state;
+      }
       if (rec.coords !== d) {
         rec.coords = d;
         rec.line.setAttribute("d", d);
@@ -655,92 +562,72 @@ export class MapLayer {
       rec.hit?.remove();
       this.lineEls.delete(key);
     }
-    // One trunk per target: from the bus into the node.
-    for (const [target, t] of trunks) {
-      let el = this.trunkEls.get(target);
-      if (!el) {
-        el = svg("path", { class: "cv-trunk", "data-b": target });
-        this.trunkEls.set(target, el);
-        this.edgesG.append(el);
-      }
-      const d = `M${t.x},${t.busY} L${t.x},${t.ty}`;
-      if (el.getAttribute("d") !== d) el.setAttribute("d", d);
-    }
-    for (const [target, el] of this.trunkEls) {
-      if (trunks.has(target)) continue;
-      el.remove();
-      this.trunkEls.delete(target);
-    }
     if (this.focus) this.applyFocus();
   }
   private lineEls = new Map<string, { line: SVGPathElement; hit?: SVGPathElement; coords: string }>();
-  private trunkEls = new Map<string, SVGPathElement>();
 
-  private laneOf(id: string): number {
-    if (id.startsWith("acct:")) return 2;
-    return this.nodes.get(id)?.lane ?? -1;
-  }
-
-  // ---------- hover focus ----------
+  // ---------- hover focus: the lines of what is hovered ----------
 
   setFocus(id: string | null) {
     if (id === this.focus) return;
     this.focus = id;
-    setClass(this.host.root, "is-focus", !!id);
+    setClass(this.host.root, "is-focus", !!id && this.on);
     this.applyFocus();
   }
 
   private applyFocus() {
     const id = this.focus;
     const lit = new Set<string>();
-    const litTargets = new Set<string>();
+    const group = id?.startsWith("agent:") ? `acct:${id.slice(6)}:` : undefined;
+    const touches = (a: string, b: string) =>
+      !!id &&
+      (a === id ||
+        b === id ||
+        (group !== undefined && (a.startsWith(group) || b.startsWith(group))) ||
+        // A machine lights the lines of its sessions.
+        (id.startsWith("machine:") && this.machineOf(a) === id));
     if (id) {
       lit.add(id);
-      const group = id.startsWith("agent:") ? `acct:${id.slice(6)}:` : undefined;
       for (const e of this.edges) {
-        const touches =
-          e.a === id || e.b === id || (group !== undefined && (e.a.startsWith(group) || e.b.startsWith(group)));
-        if (!touches) continue;
+        if (!touches(e.a, e.b)) continue;
         lit.add(e.a);
         lit.add(e.b);
-        if (e.kind !== "custom") litTargets.add(e.b);
-        if (e.a.startsWith("acct:")) lit.add(`agent:${e.a.split(":")[1]}`);
         if (e.b.startsWith("acct:")) lit.add(`agent:${e.b.split(":")[1]}`);
       }
     }
-    const group = id?.startsWith("agent:") ? `acct:${id.slice(6)}:` : undefined;
     for (const rec of this.lineEls.values()) {
-      const a = rec.line.dataset.a!;
-      const b = rec.line.dataset.b!;
-      const on =
-        !!id && (a === id || b === id || (group !== undefined && (a.startsWith(group) || b.startsWith(group))));
-      setClass(rec.line, "is-lit", on);
+      setClass(rec.line, "is-lit", touches(rec.line.dataset.a!, rec.line.dataset.b!));
     }
-    for (const [target, el] of this.trunkEls) setClass(el, "is-lit", litTargets.has(target));
     for (const n of this.nodes.values()) setClass(n.el, "is-lit", lit.has(n.id));
     for (const w of this.host.root.querySelectorAll<HTMLElement>(".cv-win")) {
       setClass(w, "is-lit", lit.has(`win:${w.dataset.key}`));
     }
   }
 
+  private machineOf(end: string): string | undefined {
+    if (!end.startsWith("win:")) return undefined;
+    const s = this.host.snapshot().sessions.get(end.slice(4));
+    return s?.machine ? `machine:${s.machine}` : undefined;
+  }
+
   // ---------- hand-drawn nodes and links ----------
 
   addCustom(x: number, y: number): string {
-    const lay = this.host.layout();
-    lay.custom ??= {};
+    const doc = this.host.doc();
     const id = `c_${Date.now().toString(36)}${Math.floor(Math.random() * 1e4).toString(36)}`;
-    const spot = findFree({ x, y }, 140, NODE_H, this.host.taken(), 24);
-    lay.custom[id] = { id, label: "", x: spot.x, y: spot.y };
+    const taken = [...this.nodes.values()].map((n) => ({ x: n.x, y: n.y, w: n.w, h: n.h }));
+    const spot = findFree({ x, y }, 140, NODE_H, [...taken, ...this.rows.values()], 24);
+    doc.custom[id] = { id, label: "", x: spot.x, y: spot.y };
     this.editing = id;
     this.build();
-    this.layoutNodes();
+    this.layout();
     this.draw();
     this.select(id);
     this.edit(id);
     return id;
   }
 
-  /** Inline edit of a custom node's label; an empty label on commit deletes it. */
+  /** Inline edit of a hand-drawn node's label; an empty label on commit deletes it. */
   edit(id: string) {
     const n = this.nodes.get(id);
     if (n?.kind !== "custom") return;
@@ -760,18 +647,16 @@ export class MapLayer {
       n.el.classList.remove("is-editing");
       this.editing = undefined;
       const label = oneLine(l.textContent ?? "", 60);
-      const lay = this.host.layout();
+      const doc = this.host.doc();
       if (!label) {
-        delete lay.custom?.[id];
-        lay.links = (lay.links ?? []).filter((k) => k.from !== id && k.to !== id);
+        delete doc.custom[id];
+        doc.links = doc.links.filter((k) => k.from !== id && k.to !== id);
         if (this.selected === id) this.selected = null;
-      } else if (lay.custom?.[id]) {
-        lay.custom[id].label = label;
-      }
+      } else if (doc.custom[id]) doc.custom[id].label = label;
       this.build();
-      this.layoutNodes();
+      this.layout();
       this.draw();
-      this.host.save();
+      this.host.commit();
       this.host.request();
     };
     const onKey = (e: KeyboardEvent) => {
@@ -800,20 +685,18 @@ export class MapLayer {
   deleteSelected(): boolean {
     const id = this.selected;
     if (!id) return false;
-    const lay = this.host.layout();
-    if (lay.custom?.[id]) {
-      delete lay.custom[id];
-      lay.links = (lay.links ?? []).filter((k) => k.from !== id && k.to !== id);
-    } else if (lay.links?.some((k) => k.id === id)) {
-      lay.links = lay.links.filter((k) => k.id !== id);
-    } else {
-      return false;
-    }
+    const doc = this.host.doc();
+    if (doc.custom[id]) {
+      delete doc.custom[id];
+      doc.links = doc.links.filter((k) => k.from !== id && k.to !== id);
+    } else if (doc.links.some((k) => k.id === id)) {
+      doc.links = doc.links.filter((k) => k.id !== id);
+    } else return false;
     this.selected = null;
     this.build();
-    this.layoutNodes();
+    this.layout();
     this.draw();
-    this.host.save();
+    this.host.commit();
     this.host.request();
     return true;
   }
@@ -822,10 +705,14 @@ export class MapLayer {
     this.linkFrom = from;
     const r = this.endRect(from);
     if (!r) return;
-    this.tempLine.setAttribute("x1", `${r.x + r.w / 2}`);
-    this.tempLine.setAttribute("y1", `${r.y + r.h / 2}`);
-    this.tempLine.setAttribute("x2", `${r.x + r.w / 2}`);
-    this.tempLine.setAttribute("y2", `${r.y + r.h / 2}`);
+    for (const [k, v] of [
+      ["x1", r.x + r.w / 2],
+      ["y1", r.y + r.h / 2],
+      ["x2", r.x + r.w / 2],
+      ["y2", r.y + r.h / 2],
+    ] as const) {
+      this.tempLine.setAttribute(k, `${v}`);
+    }
     this.tempLine.style.display = "";
     this.host.root.classList.add("is-linking");
   }
@@ -841,25 +728,32 @@ export class MapLayer {
     this.tempLine.style.display = "none";
     this.host.root.classList.remove("is-linking");
     if (!from || !to || to === from) return;
-    const lay = this.host.layout();
-    lay.links ??= [];
-    if (lay.links.some((k) => (k.from === from && k.to === to) || (k.from === to && k.to === from))) return;
+    const doc = this.host.doc();
+    if (doc.links.some((k) => (k.from === from && k.to === to) || (k.from === to && k.to === from))) return;
     const link: Link = { id: `l_${Date.now().toString(36)}${Math.floor(Math.random() * 1e4).toString(36)}`, from, to };
-    lay.links.push(link);
+    doc.links.push(link);
     this.edges = this.computeEdges();
     this.select(link.id);
-    this.host.save();
+    this.host.commit();
     this.host.request();
   }
 
   // ---------- an agent dragged onto a machine ----------
 
+  private chipById(id: string): Chip | undefined {
+    for (const n of this.nodes.values()) {
+      if (n.start?.id === id) return n.start;
+      const c = n.chips?.find((c) => c.id === id);
+      if (c) return c;
+    }
+    return undefined;
+  }
+
   beginGhost(chipId: string, sx: number, sy: number) {
-    let chip: Chip | undefined;
-    for (const n of this.nodes.values()) chip = chip ?? n.chips?.find((c) => c.id === chipId);
+    const chip = this.chipById(chipId);
     if (!chip) return;
     this.ghostChip = chip;
-    this.ghost = el("div", "cv-ghost", chip.label);
+    this.ghost = el("div", "cv-ghost", chip.label || harnessName(this.host.api, chip.harness));
     this.host.root.append(this.ghost);
     this.moveGhost(sx, sy);
     this.host.root.classList.add("is-ghosting");
@@ -890,11 +784,11 @@ export class MapLayer {
     const av =
       api.control && machine.machineId
         ? api.control.availability({ machineId: machine.machineId })
-        : { ok: false, reason: "control is not available" };
-    pop.append(el("div", "cv-pop-t", `Start ${harnessShort(chip.harness)} on ${machine.label}`));
-    pop.append(el("div", "cv-pop-s", chip.label));
+        : { ok: false, reason: "Control is not available" };
+    pop.append(el("div", "cv-pop-t", `Start ${harnessName(api, chip.harness)} on ${machine.label}`));
+    if (chip.label && chip.label !== harnessName(api, chip.harness)) pop.append(el("div", "cv-pop-s", chip.label));
     const folders = m?.control?.folders ?? [];
-    const sel = el("select", "cv-pop-folder");
+    const sel = el("select", "field cv-pop-folder");
     sel.setAttribute("aria-label", "Folder");
     for (const f of folders) {
       const o = el("option", undefined, f);
@@ -902,18 +796,18 @@ export class MapLayer {
       sel.append(o);
     }
     if (!folders.length) {
-      const o = el("option", undefined, "no folders allowed");
+      const o = el("option", undefined, "No folders allowed");
       o.value = "";
       sel.append(o);
     }
-    const input = el("input", "cv-pop-text");
+    const input = el("input", "field cv-pop-text");
     input.type = "text";
     input.placeholder = "First message";
     input.setAttribute("aria-label", "First message");
     const row = el("div", "cv-pop-row");
-    const start = el("button", "cv-pop-start", "Start");
+    const start = el("button", "btn btn--sm btn--primary cv-pop-start", "Start");
     start.type = "button";
-    const cancel = el("button", "cv-pop-cancel", "Cancel");
+    const cancel = el("button", "btn btn--sm btn--ghost cv-pop-cancel", "Cancel");
     cancel.type = "button";
     cancel.addEventListener("click", () => this.closePopover());
     const reason = el("div", "cv-pop-reason", av.ok ? "" : (av.reason ?? ""));
@@ -927,7 +821,7 @@ export class MapLayer {
     const go = async () => {
       if (!ready() || !api.control || !machine.machineId) return;
       start.disabled = true;
-      setText(reason, "sending…");
+      setText(reason, "Sending…");
       reason.hidden = false;
       try {
         const a = await api.control.start(machine.machineId, {
@@ -950,7 +844,7 @@ export class MapLayer {
       if (e.key === "Escape") this.closePopover();
     });
     sel.addEventListener("keydown", (e) => e.stopPropagation());
-    row.append(start, cancel);
+    row.append(cancel, start);
     pop.append(sel, input, row, reason);
     this.host.root.append(pop);
     const p = this.host.toScreen(machine.x, machine.y + machine.h);
@@ -959,7 +853,7 @@ export class MapLayer {
     const rootW = this.host.root.clientWidth;
     const rootH = this.host.root.clientHeight;
     const x = Math.max(8, Math.min(rootW - rw - 8, p.x));
-    const y = p.y + 8 + rh > rootH - 8 ? Math.max(8, p.y - rh - machine.h * 1 - 8) : p.y + 8;
+    const y = p.y + 8 + rh > rootH - 36 ? Math.max(56, p.y - rh - machine.h - 8) : p.y + 8;
     pop.style.transform = `translate3d(${x}px, ${y}px, 0)`;
     this.pop = pop;
     sync();
@@ -1012,8 +906,9 @@ export function orthoPath(pts: [number, number][], r = 6): string {
   return d;
 }
 
-export function harnessShort(h: string): string {
-  return h.replace(/-code$|-cli$/, "");
+/** "Claude Code" (the host's name for it), else "claude". */
+export function harnessName(api: ThemeApi, h: string): string {
+  return api.format.harnessIcon?.(h)?.name ?? h.replace(/-code$|-cli$/, "");
 }
 
 export function repoParts(repo: string): { short: string; host: string } {

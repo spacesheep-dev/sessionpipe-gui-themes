@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Bundles src/index.ts into a single ES module at dist/index.js (+ dist/index.css), the
 // files theme.json points at. No externals: the theme carries everything it needs.
+// Minified, as it ships (the source map keeps it readable); --no-minify for a look.
 
 import fs from "node:fs";
 import path from "node:path";
@@ -15,7 +16,7 @@ const result = await build({
   bundle: true,
   format: "esm",
   target: ["es2022", "chrome110", "safari16", "firefox115"],
-  minify: process.argv.includes("--minify"),
+  minify: !process.argv.includes("--no-minify"),
   sourcemap: true,
   legalComments: "none",
   metafile: true,
