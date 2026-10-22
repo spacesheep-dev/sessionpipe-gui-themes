@@ -67,6 +67,7 @@ jobs:
         run: |
           set -e
           node scripts/release-notes.mjs "$GITHUB_REF_NAME" > /tmp/notes.md
+          mkdir -p /tmp/tarballs
           for p in packages/*; do
             node -e 'const p=require(process.argv[1]+"/package.json"); process.exit(p.private?1:0)' "$PWD/$p" && (cd "$p" && npm pack --silent --pack-destination /tmp/tarballs) || true
           done

@@ -1,7 +1,7 @@
 {
   "id": "spacesheep",
   "name": "Spacesheep (package)",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "kind": "skin",
   "api": 1,
   "description": "The colours of spacesheep.dev, dark and light: flame for needs you, indigo for working, teal for stale. The same palette ships built into the GUI as its default skin; this package is the installable copy, for a GUI older than that or a fork of the palette.",
