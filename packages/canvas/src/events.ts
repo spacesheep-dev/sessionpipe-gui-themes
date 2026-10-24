@@ -1,59 +1,79 @@
 // SPDX-License-Identifier: Apache-2.0
-// One line per event for the expanded window, in the spirit of `sessionpipe tail`.
+// One row per event for the expanded window, in words: a tool call is one row (its end
+// fills in the duration), a prompt heads its turn with the time.
 import type { StoredEvent } from "@sessionpipe-gui/theme-types/api";
 import { oneLine } from "./util";
 
 const str = (v: unknown): string => (typeof v === "string" ? v : v === undefined || v === null ? "" : String(v));
 const num = (v: unknown): number | undefined => (typeof v === "number" ? v : undefined);
 
+/** The GUI's one duration grammar (web/src/lib/time.ts): "0.4 s" under a second (a tool
+ *  call; "<0.1 s" when quicker, never "0.0 s"), "12 s", "4 m", "1 h 05 m", "3 d". */
 export function durShort(msTotal: number | undefined): string {
   if (msTotal === undefined || Number.isNaN(msTotal)) return "";
-  if (msTotal < 1000) return `${Math.round(msTotal)} ms`;
-  if (msTotal < 60_000) return `${(msTotal / 1000).toFixed(msTotal < 10_000 ? 1 : 0)} s`;
-  const m = Math.floor(msTotal / 60_000);
-  if (m < 60) return `${m} min`;
+  const d = Math.max(0, msTotal);
+  if (d < 50) return "<0.1 s";
+  if (d < 1000) return `${(d / 1000).toFixed(1)} s`;
+  if (d < 60_000) return `${Math.floor(d / 1000)} s`;
+  const m = Math.floor(d / 60_000);
+  if (m < 60) return `${m} m`;
   const h = Math.floor(m / 60);
-  return `${h} h ${m % 60} min`;
+  if (h < 24) return `${h} h ${String(m % 60).padStart(2, "0")} m`;
+  return `${Math.floor(h / 24)} d`;
 }
 
 export interface EventLine {
   /** "tool" | "text" | "turn" | "attention" | "session" | "other" */
   kind: string;
-  /** A short label: the tool name, "assistant", "turn", … */
+  /** What happened, in words: the tool's name, "Prompt", "Changed", "Session started". */
   label: string;
   text: string;
+  /** The right column: a tool's duration once it ended, a turn's clock time. */
+  end?: string;
   err?: boolean;
   /** Prose events get a wrapped block instead of one line. */
   prose?: boolean;
+  /** A tool call's id: its end fills the row its start drew, one row per call. */
+  call?: string;
 }
 
+const CLEARED: Record<string, string> = { answered: "Answered", cancelled: "Cancelled", timeout: "Timed out" };
+
+/** One row in words, the way the Session page reads (raw types stay in the store). */
 export function eventLine(e: StoredEvent): EventLine | null {
   const d = e.data ?? {};
+  const tool = toolName(str(d.tool));
+  const call = str(d.call_id) || undefined;
   switch (e.type) {
     case "tool.started":
-      return { kind: "tool", label: str(d.tool), text: d.agent_id ? "subagent" : inputHint(d.input) };
+      return { kind: "tool", label: tool, text: d.agent_id ? "Subagent" : inputHint(d.input), call };
     case "tool.ended": {
       const ok = d.ok !== false;
-      const bits = [ok ? "ok" : "error"];
-      if (num(d.ms) !== undefined) bits.push(durShort(num(d.ms)));
-      if (d.error) bits.push(oneLine(str(d.error), 80));
-      return { kind: "tool", label: str(d.tool), text: bits.join(" · "), err: !ok };
+      return {
+        kind: "tool",
+        label: tool,
+        text: d.error ? oneLine(str(d.error), 120) : "",
+        end: ok ? durShort(num(d.ms)) : "✕",
+        err: !ok,
+        call,
+      };
     }
-    case "turn.started":
+    case "turn.started": {
+      const prompt = oneLine(str(d.prompt), 200);
+      const n = num(d.prompt_chars);
       return {
         kind: "turn",
-        label: "turn",
-        text: d.prompt_chars !== undefined ? `prompt · ${str(d.prompt_chars)} chars` : "prompt",
+        label: "Prompt",
+        text: prompt || (n !== undefined ? `${n} characters, not shared` : ""),
+        end: clock(e.time),
       };
-    case "turn.ended": {
-      const bits = [str(d.reason) || "stop"];
-      if (num(d.ms) !== undefined) bits.push(durShort(num(d.ms)));
-      if (d.error) bits.push(str(d.error));
-      return { kind: "turn", label: "turn", text: bits.join(" · "), err: !!d.error };
     }
+    case "turn.ended":
+      // The turn's end is the next prompt's start; only a failure says so.
+      return d.error ? { kind: "turn", label: "Turn failed", text: oneLine(str(d.error), 120), err: true } : null;
     case "turn.transcript": {
       const a = str(d.assistant);
-      return a ? { kind: "text", label: "assistant", text: oneLine(a, 600), prose: true } : null;
+      return a ? { kind: "text", label: "", text: oneLine(a, 600), prose: true } : null;
     }
     case "turn.progress":
       // The live tail shows in the window's own text line; the rows keep the transcript.
@@ -62,34 +82,41 @@ export function eventLine(e: StoredEvent): EventLine | null {
       const paths = Array.isArray(d.paths) ? (d.paths as unknown[]).map(str) : [];
       return {
         kind: "other",
-        label: "files",
+        label: "Changed",
         text: paths.length <= 3 ? paths.join(", ") : `${paths.slice(0, 3).join(", ")} +${paths.length - 3}`,
       };
     }
-    case "attention.needed":
-      return {
-        kind: "attention",
-        label: str(d.kind) || "attention",
-        text: [str(d.tool), oneLine(str(d.message), 140)].filter(Boolean).join(" · "),
-      };
+    case "attention.needed": {
+      const msg = oneLine(str(d.message), 140);
+      // The tool once: "Bash rm -rf dist" under "Bash" reads "rm -rf dist".
+      const rest = tool && msg.toLowerCase().startsWith(tool.toLowerCase()) ? msg.slice(tool.length).trim() : msg;
+      return { kind: "attention", label: "Needs you", text: [tool, rest].filter(Boolean).join(": ") };
+    }
     case "attention.cleared":
-      return { kind: "attention", label: "cleared", text: str(d.how) || "" };
+      return { kind: "attention", label: CLEARED[str(d.how)] ?? "Cleared", text: "" };
     case "session.started":
-      return { kind: "session", label: "session", text: `started · ${str(d.source) || "unknown"}` };
+      return { kind: "session", label: d.source === "resume" ? "Session resumed" : "Session started", text: "" };
     case "session.ended":
-      return { kind: "session", label: "session", text: `ended · ${str(d.reason) || "other"}` };
+      return { kind: "session", label: "Session ended", text: "" };
     case "subagent.started":
-      return { kind: "other", label: "subagent", text: `${str(d.agent_type) || "subagent"} started` };
+      return { kind: "other", label: "Subagent", text: `${str(d.agent_type) || "Agent"} started` };
     case "subagent.ended":
-      return { kind: "other", label: "subagent", text: `${str(d.agent_type) || "subagent"} ended` };
+      return { kind: "other", label: "Subagent", text: `${str(d.agent_type) || "Agent"} finished` };
     case "context.compacted":
-      return { kind: "other", label: "context", text: `compacted · ${str(d.trigger) || "auto"}` };
+      return { kind: "other", label: "Context compacted", text: "" };
     case "session.heartbeat":
     case "native":
       return null;
     default:
       return { kind: "other", label: e.type, text: Object.keys(d).slice(0, 3).join(", ") };
   }
+}
+
+/** An MCP tool reads as its server and its tool: "mcp__github__search_issues" is
+ *  "github · search_issues". */
+export function toolName(t: string): string {
+  const m = /^mcp__(.+?)__(.+)$/.exec(t);
+  return m ? `${m[1]} · ${m[2]}` : t;
 }
 
 /** The one thing worth showing from a tool's input: a command, a path, a pattern. */
@@ -103,8 +130,14 @@ function inputHint(input: unknown): string {
   return "";
 }
 
-export function clock(iso: string): string {
+/** 24-hour "14:05", the time a turn began. */
+export function clock(iso: string, seconds = false): string {
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return "";
-  return d.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false });
+  return d.toLocaleTimeString(undefined, {
+    hour: "2-digit",
+    minute: "2-digit",
+    ...(seconds ? { second: "2-digit" } : {}),
+    hour12: false,
+  });
 }

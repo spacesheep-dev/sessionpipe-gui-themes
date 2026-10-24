@@ -4,15 +4,16 @@
 // laid out with. The view, the viewport and small preferences live in api.local.
 import type { LabelColor, SessionKey, SessionState } from "@sessionpipe-gui/theme-types/api";
 
-/** The views, in the order of the segmented control (keys 1–7). */
+/** The views, in the order of the segmented control (keys 1–7): the default (State)
+ *  first, then the other groupings, then the person's own layout and the map. */
 export type ViewId = "layout" | "state" | "machine" | "harness" | "repo" | "label" | "map";
 export const VIEWS: readonly { id: ViewId; label: string }[] = [
-  { id: "layout", label: "My layout" },
   { id: "state", label: "State" },
   { id: "machine", label: "Machine" },
   { id: "harness", label: "Harness" },
   { id: "repo", label: "Repo" },
   { id: "label", label: "Label" },
+  { id: "layout", label: "My layout" },
   { id: "map", label: "Map" },
 ];
 /** Computed views: a clean grid in labelled groups, the same on every device, never stored. */
@@ -128,11 +129,15 @@ export const ZOOM_MIN = 0.25;
 export const ZOOM_MAX = 2;
 export const GRID = 8;
 
-/** A window: fixed sizes by kind, so a grid is clean. */
+/** A window: fixed sizes by kind, so a grid is clean. 100 = the 32 px bar, the 20 px
+ *  line, two lines of body and the bottom inset: a window that has only "Thinking" to
+ *  say keeps one quiet line of room, not a third of the window empty. */
 export const WIN_W = 280;
-export const WIN_H = 116;
-/** Needs you and answerable: the actions row. */
-export const WIN_H_ASK = 148;
+export const WIN_H = 100;
+/** A window on a phone is a row of the group's inset table: title, meta, one line. */
+export const PHONE_ROW_H = 78;
+/** Needs you and answerable: two lines of the request and the actions row under it. */
+export const WIN_H_ASK = 132;
 export const EXP_W = 360;
 export const EXP_H = 420;
 export const EXP_MAX_W = 1400;

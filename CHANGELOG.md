@@ -6,6 +6,25 @@ All notable changes to the packages in `sessionpipe-gui-themes`. The format foll
 
 ## [Unreleased]
 
+### Changed
+
+- **`@sessionpipe-gui/theme-canvas`**: State, the default view, comes first (keys `1`–`7`
+  follow the new order). Tidy and the presets read from the top-left, with shared row tops
+  across a shelf. A window says less, once: two lines of body, the tool named once
+  ("Bash: rm -rf dist"), MCP tools as "github · search_issues", previews without their
+  Markdown, an error as one red ✕, durations on the GUI's grammar ("4 m"). The expanded
+  window's rows read in words, one row per tool call. Live moves slide the group headings
+  instead of blinking them; a window that leaves fades out. Windows dropped into an area
+  land clear of its members, and the area grows to hold them. On the phone each group is
+  one inset table of rows. The Map drops a passkey that is already a browser chip, and
+  agents without an account. The Map's code is its own module, loaded the first time the
+  Map is shown: the canvas opens on 103 KB of script instead of 113 KB.
+
+### Added
+
+- **`@sessionpipe-gui/theme-canvas`**: an empty canvas says what fills it, with the way to
+  the Board; a search with no hits says so, with Clear.
+
 ## [0.2.0] - 2026-10-23
 
 Alongside `sessionpipe-gui` 0.2.0, the native redesign.

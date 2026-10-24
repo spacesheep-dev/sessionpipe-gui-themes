@@ -75,11 +75,11 @@ test("views: the keys switch, the move animates, every group has a heading, pill
   await open(page);
   const parent = await parentKey(page);
   const cases: [string, string, RegExp][] = [
-    ["3", "machine", /misha-air|studio/],
-    ["4", "harness", /Claude Code/],
-    ["5", "repo", /spacesheep-dev\/sessionpipe/],
-    ["6", "label", /No label/],
-    ["2", "state", /Needs you/],
+    ["2", "machine", /misha-air|studio/],
+    ["3", "harness", /Claude Code/],
+    ["4", "repo", /spacesheep-dev\/sessionpipe/],
+    ["5", "label", /No label/],
+    ["1", "state", /Needs you/],
   ];
   for (const [key, id, heading] of cases) {
     await page.keyboard.press(key);
@@ -217,6 +217,13 @@ test("search: free text and tokens highlight and dim; Escape clears", async ({ p
   await page.keyboard.press("Escape");
   await expect(page.locator(".cv-win.is-dim")).toHaveCount(0);
   await expect(page.locator(".cv-search input")).toHaveValue("");
+  // No hits says so, with the way out.
+  await page.keyboard.press("/");
+  await page.keyboard.type("qqqq");
+  await expect(page.locator(".cv-say-t")).toHaveText("No sessions match “qqqq”");
+  await page.locator(".cv-say-btn").click();
+  await expect(page.locator(".cv-search input")).toHaveValue("");
+  await expect(page.locator(".cv-win.is-dim")).toHaveCount(0);
 });
 
 test("My layout: a new session lands in free space, overlapping nothing, and is stored", async ({ page }) => {

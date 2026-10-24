@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
 // The Map view: the infrastructure around the sessions, in lanes from the top: devices
-// (browsers on this GUI, grouped by name, and the passkeys machines trust), agents (one
-// node per harness; an account only when it has an email), machines with their sessions
-// as small rows under them, and the repos those work in. Lines show only for what is
+// (browsers on this GUI, grouped by name, and the passkeys machines trust that are no
+// browser here), agents (one node per harness that reports an account, named only when
+// it has an email), machines with their sessions as small rows under them, and the repos
+// those work in. Lines show only for what is
 // hovered. Hand-drawn nodes and links are the person's, kept in the canvas document.
 // Everything is positioned with transforms; the DOM is rebuilt only when the set of
 // nodes changes, lines are redrawn when something moved.
@@ -10,7 +11,7 @@ import type { ThemeApi, ThemeSnapshot } from "@sessionpipe-gui/theme-types";
 import type { SessionKey, SessionState, SessionSummary } from "@sessionpipe-gui/theme-types/api";
 import { findFree, type Rect } from "./layout";
 import { type CustomNode, LANE_GAP, type Link, type MapDoc, NODE_GAP, NODE_H, ROW_H, ROW_W } from "./types";
-import { el, oneLine, setClass, setText, svg } from "./util";
+import { el, harnessName, oneLine, repoParts, setClass, setText, svg } from "./util";
 
 export type NodeKind = "device" | "agent" | "machine" | "repo" | "custom";
 
@@ -161,8 +162,15 @@ export class MapLayer {
     const keys = new Set<string>();
     for (const m of s.machines.values())
       for (const k of m.control?.keys ?? []) if (k.name?.trim()) keys.add(k.name.trim());
+    // A passkey named for a browser already here ("Mac" beside "Mac · Chrome") is that
+    // browser: one chip, not two.
+    const labels = [...byLabel.keys()].map((l) => l.toLowerCase());
+    const sameDevice = (name: string) => {
+      const n = name.toLowerCase();
+      return labels.some((l) => l === n || l.startsWith(`${n} ·`) || l.startsWith(`${n} (`));
+    };
     for (const name of keys) {
-      if (byLabel.has(name)) continue;
+      if (sameDevice(name)) continue;
       want.push({ id: `dev:key:${name}`, kind: "device", lane: 0, label: name, sub: "passkey" });
     }
 
@@ -186,6 +194,9 @@ export class MapLayer {
       }
     }
     for (const [harness, accounts] of [...groups].sort((a, b) => a[0].localeCompare(b[0]))) {
+      // The lane is the accounts the agents run as: a harness that reports none says
+      // nothing here (its sessions are on their machines below).
+      if (accounts.size === 0) continue;
       const name = harnessName(api, harness);
       const all = [...accounts.values()];
       const first = all[0];
@@ -904,18 +915,6 @@ export function orthoPath(pts: [number, number][], r = 6): string {
   const [lx, ly] = pts[pts.length - 1]!;
   d += ` L${lx},${ly}`;
   return d;
-}
-
-/** "Claude Code" (the host's name for it), else "claude". */
-export function harnessName(api: ThemeApi, h: string): string {
-  return api.format.harnessIcon?.(h)?.name ?? h.replace(/-code$|-cli$/, "");
-}
-
-export function repoParts(repo: string): { short: string; host: string } {
-  const noScheme = repo.replace(/^[a-z]+:\/\//i, "").replace(/\.git$/, "");
-  const parts = noScheme.split("/").filter(Boolean);
-  if (parts.length >= 3) return { short: parts.slice(-2).join("/"), host: parts[0]! };
-  return { short: noScheme, host: "" };
 }
 
 export type { CustomNode };
