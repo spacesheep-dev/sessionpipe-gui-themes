@@ -115,8 +115,11 @@ export function eventLine(e: StoredEvent): EventLine | null {
 /** An MCP tool reads as its server and its tool: "mcp__github__search_issues" is
  *  "github · search_issues". */
 export function toolName(t: string): string {
-  const m = /^mcp__(.+?)__(.+)$/.exec(t);
-  return m ? `${m[1]} · ${m[2]}` : t;
+  // indexOf, not a lazy regex: a name like "mcp__a__a__a…" made the regex backtrack.
+  if (!t.startsWith("mcp__")) return t;
+  const rest = t.slice(5);
+  const i = rest.indexOf("__", 1);
+  return i > 0 && i + 2 < rest.length ? `${rest.slice(0, i)} · ${rest.slice(i + 2)}` : t;
 }
 
 /** The one thing worth showing from a tool's input: a command, a path, a pattern. */

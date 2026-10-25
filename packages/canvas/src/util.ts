@@ -68,6 +68,8 @@ export function oneLine(s: string | undefined, max: number): string {
 }
 
 const inlineSrc = new WeakMap<HTMLElement, string>();
+/** The longest text a one-line preview reads; the window cuts it far shorter anyway. */
+const PREVIEW_MAX = 2000;
 
 /** A one-line preview without its Markdown: `code` becomes mono without the ticks, and
  *  emphasis, links and heading marks are dropped. `md: false` sets plain text. Rebuilt
@@ -80,8 +82,11 @@ export function setInline(e: HTMLElement, text: string, md = true) {
     e.textContent = text;
     return;
   }
+  // A preview is one line: cap it before the patterns run, and keep the link pattern from
+  // re-scanning across nested brackets, so no input makes these quadratic.
   const plain = text
-    .replace(/\[([^\]]+)\]\([^)]*\)/g, "$1")
+    .slice(0, PREVIEW_MAX)
+    .replace(/\[([^[\]]+)\]\([^()]*\)/g, "$1")
     .replace(/(\*\*|__)(.+?)\1/g, "$2")
     .replace(/(^|[\s(])[*_]([^*_\s][^*_]*?)[*_](?=[\s).,:;!?]|$)/g, "$1$2")
     .replace(/(^|\s)#{1,6} /g, "$1");
