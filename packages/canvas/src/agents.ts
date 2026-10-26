@@ -4,9 +4,9 @@
 // is always derived from its parent, so it can never be stranded. Nothing is guessed: no
 // tool facts unless the agent's tools are attributed, no result unless one was sent.
 import type { AgentRun, SessionSummary } from "@sessionpipe-gui/theme-types/api";
-import { durShort } from "./events";
+import { durShort, toolName } from "./events";
 import { PILL_GAP, PILL_H, PILL_MORE_H, PILLS_SHOWN } from "./types";
-import { el, ms, oneLine, setClass, setText } from "./util";
+import { el, ms, oneLine, setClass, setInline, setText } from "./util";
 
 /** Pill ids: `<parent key>#<agent id>`; the fold row: `<parent key>#more`. */
 export const pillId = (parent: string, agent: string) => `${parent}#${agent}`;
@@ -64,7 +64,8 @@ export function agentNow(a: AgentRun, now: number): string {
   if (!a.attributed) return "Running";
   if (a.currentTool) {
     const d = Math.max(0, now - ms(a.currentTool.since));
-    return d < 1500 ? a.currentTool.tool : `${a.currentTool.tool} · ${durShort(d)}`;
+    const name = toolName(a.currentTool.tool);
+    return d < 1500 ? name : `${name} · ${durShort(Math.floor(d / 1000) * 1000)}`;
   }
   return "Thinking";
 }
@@ -114,7 +115,7 @@ export class PillView {
     this.glyph.className = `dot dot--${GLYPH[a.state]} cv-pill-glyph`;
     setText(this.type, type);
     setText(this.desc, type && description ? `\u00a0·\u00a0${description}` : description);
-    setText(this.now, nowText);
+    setInline(this.now, nowText);
     setClass(this.el, "is-done", a.state === "done");
     const label = [type, description].filter(Boolean).join(" · ");
     this.el.setAttribute("aria-label", `Subagent ${label}, ${a.state === "running" ? "running" : a.state}: ${nowText}`);

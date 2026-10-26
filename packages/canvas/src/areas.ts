@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 // My layout's own objects: areas (a titled, dashed container the person drew, holding
 // sessions by key) and notes (plain text). Both edit in place: Enter commits a title,
-// ⌘↵ a note (Enter is a newline there), Esc cancels, leaving the field commits.
+// ⌘↵ a note (Enter is a newline there), leaving the field commits. Esc cancels a rename
+// (Finder's way) but keeps what was written in a note: a sticky never loses its text.
 import type { LabelColor } from "@sessionpipe-gui/theme-types/api";
 import { type Area, NOTE_MAX, type Note, TITLE_MAX } from "./types";
 import { el, setClass, setText } from "./util";
@@ -42,7 +43,7 @@ export function editInline(field: HTMLElement, opts: { multiline: boolean; max: 
       e.stopPropagation();
       if (e.key === "Escape") {
         e.preventDefault();
-        finish(null);
+        finish(opts.multiline ? read() : null);
         field.blur();
       } else if (e.key === "Enter" && (!opts.multiline || e.metaKey || e.ctrlKey)) {
         e.preventDefault();

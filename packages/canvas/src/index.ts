@@ -32,8 +32,8 @@ import {
   v1HasPositions,
 } from "./doc";
 import { attachInput, type Hit, type InputHost, type MenuSource } from "./input";
-import { bounds, type Cell, colsFor, findFree, type Group, gridCells, gridLayout, overlaps } from "./layout";
-import { harnessName, type MapHost, MapLayer, repoParts } from "./map";
+import { bounds, type Cell, chooseCols, findFree, type Group, gridCells, gridLayout, overlaps, spanOf } from "./layout";
+import type { MapHost, MapLayer } from "./map";
 import {
   AREA_HEAD,
   AREA_MIN_H,
@@ -50,6 +50,7 @@ import {
   emptyDoc,
   GRID,
   GROUP_GAP,
+  HEAD_GAP,
   HEAD_H,
   isPreset,
   MINIMAP_W,
@@ -59,6 +60,7 @@ import {
   NOTE_MIN_H,
   NOTE_MIN_W,
   NOTE_W,
+  PHONE_ROW_H,
   PHONE_W,
   PILL_GAP,
   PILL_H,
@@ -79,7 +81,18 @@ import {
   ZOOM_MAX,
   ZOOM_MIN,
 } from "./types";
-import { clamp, debounce, el, isTouchLike, reducedMotion, setClass, setText, svg } from "./util";
+import {
+  clamp,
+  debounce,
+  el,
+  harnessName,
+  isTouchLike,
+  reducedMotion,
+  repoParts,
+  setClass,
+  setText,
+  svg,
+} from "./util";
 import { WinView } from "./window";
 
 const LOCAL_VIEW = "view";
@@ -127,7 +140,10 @@ class Canvas implements InputHost, ChromeHost {
   private marqueeEl: HTMLElement;
   private tip: HTMLElement;
   private minimap: HTMLCanvasElement;
-  private map: MapLayer;
+  /** The Map view's layer: its own module, fetched the first time the Map is shown. */
+  private map: MapLayer | undefined;
+  private mapLoad: Promise<void> | undefined;
+  private dead = false;
   private chrome: Chrome;
 
   private doc: Doc = emptyDoc();
@@ -162,6 +178,8 @@ class Canvas implements InputHost, ChromeHost {
   private motion = !reducedMotion();
   private layoutSig = "";
   private tidying: ReturnType<typeof setTimeout> | undefined;
+  /** The next fit follows a Tidy: it anchors at the top-left as a preset does. */
+  private tidied = false;
   /** A gesture is under way: another device's document waits for its end. */
   private gesture = false;
   private pendingRemote: { v: unknown } | undefined;
@@ -183,6 +201,10 @@ class Canvas implements InputHost, ChromeHost {
   /** Sessions a start named, waiting to appear by their machine's node. */
   private pendingStart = new Map<SessionKey, string>();
   private minimapMap: { s: number; ox: number; oy: number } | undefined;
+  private empty: HTMLDivElement;
+  private plateEls = new Map<string, HTMLDivElement>();
+  private emptyTitle: HTMLParagraphElement;
+  private emptyText: HTMLParagraphElement;
 
   constructor(
     container: HTMLElement,
@@ -204,18 +226,7 @@ class Canvas implements InputHost, ChromeHost {
     this.notesEl = el("div", "cv-notes");
     this.marqueeEl = el("div", "cv-marquee");
     this.marqueeEl.hidden = true;
-    this.map = new MapLayer(this.mapHost());
-    this.world.append(
-      this.areasEl,
-      this.headsEl,
-      this.map.lanesEl,
-      this.tethers,
-      this.map.nodesEl,
-      this.winsEl,
-      this.notesEl,
-      this.map.customEl,
-      this.marqueeEl,
-    );
+    this.world.append(this.areasEl, this.headsEl, this.tethers, this.winsEl, this.notesEl, this.marqueeEl);
     this.chrome = new Chrome(this);
     this.minimap = el("canvas", "cv-minimap");
     this.minimap.setAttribute("aria-hidden", "true");
@@ -234,7 +245,22 @@ class Canvas implements InputHost, ChromeHost {
     this.tip = el("div", "cv-tip");
     this.tip.hidden = true;
     this.tip.setAttribute("role", "tooltip");
-    this.root.append(this.world, this.chrome.bar, this.chrome.statusBar, this.minimap, this.tip);
+    // Nothing on the canvas yet: what fills it, once, where the first window would be,
+    // and the way to the Board (which lists the same sessions as rows).
+    this.empty = el("div", "cv-empty");
+    this.empty.hidden = true;
+    this.empty.setAttribute("role", "status");
+    const emptyLink = el("a", "cv-empty-link", "Open the Board");
+    emptyLink.href = "/";
+    emptyLink.addEventListener("click", (e) => {
+      if (e.metaKey || e.ctrlKey || e.shiftKey || e.button !== 0) return;
+      e.preventDefault();
+      this.api.navigate("/");
+    });
+    this.emptyTitle = el("p", "cv-empty-title");
+    this.emptyText = el("p", "cv-empty-text");
+    this.empty.append(this.emptyTitle, this.emptyText, emptyLink);
+    this.root.append(this.world, this.chrome.bar, this.chrome.statusBar, this.minimap, this.tip, this.empty);
     this.root.addEventListener("pointerover", (e) => this.tipOver(e));
     this.root.addEventListener("pointerdown", () => this.hideTip());
     container.append(this.root);
@@ -270,6 +296,7 @@ class Canvas implements InputHost, ChromeHost {
     this.doc = normalize(raw);
     const stored = this.api.local.get<ViewId>(LOCAL_VIEW);
     this.viewId = stored && VIEWS.some((v) => v.id === stored) ? stored : v1HasPositions(raw) ? "layout" : "state";
+    if (this.viewId === "map") await this.loadMap();
     // A layout from an earlier build: migrated once, by the first desktop that opens.
     if ((raw as { v?: number } | null)?.v === 1 && !this.phone) {
       void this.writeRaw((cur) => ((cur as { v?: number } | null)?.v === 1 ? migrate(cur as never) : normalize(cur)));
@@ -286,6 +313,7 @@ class Canvas implements InputHost, ChromeHost {
   }
 
   destroy() {
+    this.dead = true;
     for (const u of this.unsubs) u();
     if (this.ticker) clearInterval(this.ticker);
     this.ro?.disconnect();
@@ -293,7 +321,7 @@ class Canvas implements InputHost, ChromeHost {
     this.saveVp.flush();
     this.placeLater.flush();
     for (const v of this.wins.values()) v.destroy();
-    this.map.destroy();
+    this.map?.destroy();
     this.chrome.destroy();
     this.root.remove();
   }
@@ -484,6 +512,19 @@ class Canvas implements InputHost, ChromeHost {
       acts.set(a.session, list);
     }
     const { hint, own } = this.pairing(vis.wins);
+    // The empty canvas speaks once the stream is live and there is nothing to place (the
+    // map still has its machines and repos, so it says nothing).
+    this.empty.hidden = !(s.connection === "live" && vis.wins.length === 0 && this.viewId !== "map");
+    if (!this.empty.hidden) {
+      const finished = vis.done.length > 0;
+      setText(this.emptyTitle, finished ? "Nothing is running" : "Sessions appear here as windows");
+      setText(
+        this.emptyText,
+        finished
+          ? "Finished sessions wait under Done, at the bottom right. A new one opens here as a window."
+          : "Start an agent in any terminal on a machine that sends here; it opens as a window, grouped by its state.",
+      );
+    }
     const want = new Set<SessionKey>();
     for (const sess of vis.wins) {
       want.add(sess.key);
@@ -520,7 +561,9 @@ class Canvas implements InputHost, ChromeHost {
     }
     for (const [k, v] of this.wins) {
       if (!want.has(k)) {
-        v.destroy();
+        // A window that leaves (done, hidden, filtered) fades out where it stood; a view
+        // switch to the Map, which draws rows instead, just swaps.
+        v.destroy(this.ready && this.motion && this.viewId !== "map");
         this.wins.delete(k);
         this.selection.delete(`w:${k}`);
       }
@@ -538,7 +581,7 @@ class Canvas implements InputHost, ChromeHost {
     this.chrome.setCounts(vis.hidden.length, vis.done.length);
     this.hiddenList = vis.hidden;
     this.doneList = vis.done.slice(0, DONE_MAX);
-    if (this.viewId === "map") this.map.build();
+    if (this.viewId === "map") this.map!.build();
     const sig = this.signature(vis.wins);
     if (sig !== this.layoutSig) {
       const first = !this.layoutSig;
@@ -667,6 +710,11 @@ class Canvas implements InputHost, ChromeHost {
 
   setView(v: ViewId) {
     if (v === this.viewId) return;
+    // The Map's code arrives on its first use (a few ms locally); the switch follows it.
+    if (v === "map" && !this.map) {
+      void this.loadMap().then(() => this.map && this.setView(v));
+      return;
+    }
     this.saveVp.flush();
     this.viewId = v;
     this.api.local.set(LOCAL_VIEW, v);
@@ -678,14 +726,34 @@ class Canvas implements InputHost, ChromeHost {
     const vp = v === "layout" ? this.api.local.get<Viewport>(vpKey(v)) : null;
     if (vp && !this.phone) this.animateTo({ ...vp });
     else this.fit(true);
-    this.animateLayout();
+    this.animateLayout(true);
+  }
+
+  /** Fetches the Map's module once and puts its layers into the world, each between the
+   *  canvas's own: lanes under the tethers, nodes under the windows, hand-drawn nodes on top. */
+  private loadMap(): Promise<void> {
+    this.mapLoad ??= import("./map").then(
+      ({ MapLayer }) => {
+        if (this.dead) return;
+        const m = new MapLayer(this.mapHost());
+        this.tethers.before(m.lanesEl);
+        this.winsEl.before(m.nodesEl);
+        this.marqueeEl.before(m.customEl);
+        this.map = m;
+      },
+      () => {
+        this.mapLoad = undefined;
+        this.chrome.say("Couldn’t load the Map");
+      },
+    );
+    return this.mapLoad;
   }
 
   private applyView(fresh: boolean) {
     const v = this.viewId;
     this.root.dataset.view = v;
-    this.map.setOn(v === "map");
-    if (v === "map" && fresh) this.map.build();
+    this.map?.setOn(v === "map");
+    if (v === "map" && fresh) this.map!.build();
   }
 
   private relayoutSoon = debounce(120, () => this.relayout(false));
@@ -698,9 +766,9 @@ class Canvas implements InputHost, ChromeHost {
     this.heads = [];
     this.phoneBoxes.clear();
     if (this.viewId === "map") {
-      this.map.build();
-      this.map.layout();
-      for (const [k, r] of this.map.rows) if (this.wins.has(k)) this.rects.set(k, r);
+      this.map!.build();
+      this.map!.layout();
+      for (const [k, r] of this.map!.rows) if (this.wins.has(k)) this.rects.set(k, r);
     } else if (isPreset(this.viewId) || this.phone) {
       const groups = this.viewId === "layout" ? this.phoneLayoutGroups(vis) : this.groups(vis);
       const cellGroups: Group[] = groups.map((g) => ({
@@ -727,6 +795,11 @@ class Canvas implements InputHost, ChromeHost {
       for (const g of groups) {
         const box = boxes.get(g.id);
         if (box && g.title) this.heads.push({ ...g, box, count: g.keys.length });
+        // A phone's rows have a hairline above them, except the first of each table.
+        g.keys.forEach((k, i) => {
+          const w = this.wins.get(k);
+          if (w) setClass(w.el, "is-first", this.phone && i === 0);
+        });
       }
     } else {
       this.layoutMine(vis);
@@ -737,12 +810,17 @@ class Canvas implements InputHost, ChromeHost {
     this.request();
   }
 
-  private animateLayout() {
+  /** Windows glide to their new places over 320 ms. A view switch or a Tidy (`regroup`)
+   *  also swaps the headings: the old ones fade out, the new ones in once it lands. A live
+   *  move (a session changing group) keeps the headings up and slides them along, so the
+   *  canvas never blinks while the agents work. */
+  private animateLayout(regroup = false) {
     if (!this.motion) return;
     this.world.classList.add("is-tidying");
+    if (regroup) this.world.classList.add("is-regrouping");
     clearTimeout(this.tidying);
     this.tidying = setTimeout(() => {
-      this.world.classList.remove("is-tidying");
+      this.world.classList.remove("is-tidying", "is-regrouping");
       this.request();
     }, TWEEN_MS + 40);
   }
@@ -770,7 +848,7 @@ class Canvas implements InputHost, ChromeHost {
 
   /** A window's size by kind (§5.2): fixed, so the grid is clean. */
   private sizeOf(key: SessionKey): { w: number; h: number } {
-    if (this.viewId === "map") return this.map.rows.get(key) ?? { w: 240, h: 32 };
+    if (this.viewId === "map") return this.map!.rows.get(key) ?? { w: 240, h: 32 };
     const s = this.snapshot.sessions.get(key);
     const base = this.phone ? this.phoneW : WIN_W;
     if (this.isExpanded(key)) {
@@ -778,6 +856,7 @@ class Canvas implements InputHost, ChromeHost {
       if (this.phone) return { w: base, h: EXP_H };
       return { w: e?.w ?? EXP_W, h: e?.h ?? EXP_H };
     }
+    if (this.phone) return { w: base, h: PHONE_ROW_H };
     return { w: base, h: s && this.answerable(s) ? WIN_H_ASK : WIN_H };
   }
 
@@ -787,15 +866,19 @@ class Canvas implements InputHost, ChromeHost {
     const size = this.sizeOf(key);
     const st = this.stacks.get(key);
     const sh = st ? stackHeight(st) : 0;
-    if (!sh) return { key, span: size.w > WIN_W && !this.phone ? 2 : 1, h: size.h };
-    if (this.phone) return { key, span: 1, h: size.h + PILL_GAP + sh };
-    return { key, span: 2, h: Math.max(size.h, sh) };
+    if (this.phone) return { key, span: 1, h: size.h + (sh ? PILL_GAP + sh : 0) };
+    // Pills sit PILL_OFF right of the window, so an expanded parent takes three columns.
+    if (!sh) return { key, span: spanOf(size.w), h: size.h };
+    return { key, span: spanOf(size.w + PILL_OFF + PILL_W), h: Math.max(size.h, sh) };
   }
 
   /** The footprint of a window with its pills, for finding free space. */
   private footprint(key: SessionKey, x: number, y: number): Rect {
     const c = this.cell(key);
-    return { x, y, w: c.span === 2 ? WIN_W * 2 + COL_GAP : this.sizeOf(key).w, h: c.h };
+    const st = this.stacks.get(key);
+    const pills = !this.phone && st && stackHeight(st) > 0;
+    const w = this.sizeOf(key).w;
+    return { x, y, w: pills ? w + PILL_OFF + PILL_W : w, h: c.h };
   }
 
   private groupOf(s: SessionSummary): string {
@@ -911,7 +994,7 @@ class Canvas implements InputHost, ChromeHost {
       // A first open: the free windows on a grid, the way Tidy would.
       const cells = fresh.map((s) => this.cell(s.key));
       const out = new Map<string, { x: number; y: number }>();
-      gridCells(cells, colsFor(cells.reduce((n, c) => n + c.span, 0)), out);
+      gridCells(cells, chooseCols(cells), out);
       for (const [k, p] of out) placed[k] = p;
     } else {
       const taken = [...this.rects.entries()].map(([k, r]) => this.footprint(k, r.x, r.y));
@@ -922,7 +1005,7 @@ class Canvas implements InputHost, ChromeHost {
         const nodeId = this.pendingStart.get(s.key);
         if (nodeId) {
           this.pendingStart.delete(s.key);
-          const nr = this.map.nodeRect(nodeId);
+          const nr = this.map?.nodeRect(nodeId);
           if (nr) centre = { x: nr.x + nr.w / 2, y: nr.y - 120 };
         }
         const fp = this.footprint(s.key, 0, 0);
@@ -983,11 +1066,39 @@ class Canvas implements InputHost, ChromeHost {
       }
       e.style.transform = `translate3d(${h.box.x}px, ${h.box.y}px, 0)`;
       e.style.width = `${Math.max(h.box.w, WIN_W)}px`;
+      // A phone draws each group as one inset table: a plate under its rows.
+      let plate = this.plateEls.get(h.id);
+      if (this.phone) {
+        if (!plate) {
+          plate = el("div", "cv-plate");
+          plate.setAttribute("aria-hidden", "true");
+          this.headsEl.prepend(plate);
+          this.plateEls.set(h.id, plate);
+        }
+        const top = HEAD_H + HEAD_GAP;
+        plate.style.transform = `translate3d(${h.box.x}px, ${h.box.y + top}px, 0)`;
+        plate.style.width = `${this.phoneW}px`;
+        plate.style.height = `${Math.max(0, h.box.h - top)}px`;
+      } else if (plate) {
+        plate.remove();
+        this.plateEls.delete(h.id);
+      }
     }
     for (const [id, e] of this.headEls) {
       if (!want.has(id)) {
-        e.remove();
         this.headEls.delete(id);
+        // A heading leaves the way it came: it fades (140 ms) while the windows move.
+        if (this.motion) {
+          e.classList.add("is-leaving");
+          e.removeAttribute("role");
+          setTimeout(() => e.remove(), 160);
+        } else e.remove();
+      }
+    }
+    for (const [id, e] of this.plateEls) {
+      if (!want.has(id)) {
+        e.remove();
+        this.plateEls.delete(id);
       }
     }
   }
@@ -1134,9 +1245,9 @@ class Canvas implements InputHost, ChromeHost {
       }
     }
     if (this.viewId === "map") {
-      const l = this.map.laneBounds();
+      const l = this.map!.laneBounds();
       if (l) out.push(l);
-      for (const n of this.map.nodes.values()) out.push({ x: n.x, y: n.y, w: n.w, h: n.h });
+      for (const n of this.map!.nodes.values()) out.push({ x: n.x, y: n.y, w: n.w, h: n.h });
     }
     return out;
   }
@@ -1214,7 +1325,7 @@ class Canvas implements InputHost, ChromeHost {
       }
     }
     this.drawTethers();
-    if (this.viewId === "map") this.map.draw();
+    if (this.viewId === "map") this.map!.draw();
     this.drawMinimap();
   }
 
@@ -1360,11 +1471,16 @@ class Canvas implements InputHost, ChromeHost {
     const kw = (this.size.w - side * 2) / b.w;
     const kh = (this.size.h - top - bottom) / b.h;
     const k = clamp(Math.min(kw, this.phone ? 1 : kh, 1), ZOOM_MIN, ZOOM_MAX);
+    // A preset grid (and Tidy's) reads from its top-left corner, as a document does: its
+    // first heading under the bar at the left margin, never floated to the middle of an
+    // empty window. My layout and the map keep their arrangement centred.
+    const anchored = this.phone || isPreset(this.viewId) || this.tidied;
     const to = {
-      x: this.phone ? side - b.x * k : (this.size.w - b.w * k) / 2 - b.x * k,
-      y: this.phone || kh < kw ? top - b.y * k : top + (this.size.h - top - bottom - b.h * k) / 2 - b.y * k,
+      x: this.phone || anchored ? side - b.x * k : (this.size.w - b.w * k) / 2 - b.x * k,
+      y: anchored || kh < kw ? top - b.y * k : top + (this.size.h - top - bottom - b.h * k) / 2 - b.y * k,
       k,
     };
+    this.tidied = false;
     if (this.phone && b.w * k < this.size.w - side * 2) to.x = (this.size.w - b.w * k) / 2 - b.x * k;
     if (animate) this.animateTo(to);
     else {
@@ -1428,10 +1544,17 @@ class Canvas implements InputHost, ChromeHost {
     const vis = [...this.wins.keys()];
     let right = Number.NEGATIVE_INFINITY;
     let top = Number.POSITIVE_INFINITY;
+    // The free windows go on a grid to the right of everything the person placed: their
+    // areas (at the size Tidy gives them) and their notes, which stay where they are.
     for (const [id, a] of Object.entries(this.doc.areas)) {
-      ops.push(this.tidyAreaOp(id, vis));
-      right = Math.max(right, a.x + a.w);
+      const op = this.tidyAreaOp(id, vis);
+      ops.push(op);
+      right = Math.max(right, a.x + (op.patch.w ?? a.w));
       top = Math.min(top, a.y);
+    }
+    for (const n of Object.values(this.doc.notes)) {
+      right = Math.max(right, n.x + n.w);
+      top = Math.min(top, n.y);
     }
     const free = vis.filter((k) => !areaOf(this.doc, k));
     const sorted = free
@@ -1442,38 +1565,36 @@ class Canvas implements InputHost, ChromeHost {
     const out = new Map<string, { x: number; y: number }>();
     const ox = Number.isFinite(right) ? right + GROUP_GAP : 0;
     const oy = Number.isFinite(top) ? top : 0;
-    gridCells(
-      cells,
-      Math.max(colsFor(cells.reduce((n, c) => n + c.span, 0)), cells.some((c) => c.span === 2) ? 2 : 1),
-      out,
-      ox,
-      oy,
-    );
+    gridCells(cells, chooseCols(cells), out, ox, oy);
     const set: Record<SessionKey, { x: number; y: number; expanded?: boolean }> = {};
     for (const [k, p] of out) set[k] = { ...this.doc.windows[k], x: p.x, y: p.y };
     ops.push({ t: "win", set });
     this.commit({ t: "batch", ops });
-    this.animateLayout();
+    this.animateLayout(true);
+    this.tidied = true;
     this.fit();
     this.chrome.say("Tidied");
   }
 
-  /** An area's members on the grid inside it: its width fixed, its height grown to fit. */
-  private tidyAreaOp(id: string, onCanvas: SessionKey[]): Op {
+  /** An area's members on the grid inside it: as many columns as its width holds (a
+   *  window with its pills takes two), the area widened only when one of those doesn't
+   *  fit, and its height grown to the grid. */
+  private tidyAreaOp(id: string, onCanvas: SessionKey[]): Extract<Op, { t: "areaPatch" }> {
     const a = this.doc.areas[id]!;
     const members = onCanvas
       .filter((k) => a.members[k])
       .map((k) => this.snapshot.sessions.get(k)!)
       .filter(Boolean)
       .sort((p, q) => STATE_ORDER.indexOf(p.state) - STATE_ORDER.indexOf(q.state) || q.lastAt.localeCompare(p.lastAt));
-    const cols = Math.max(1, Math.floor((a.w - AREA_PAD * 2 + COL_GAP) / (WIN_W + COL_GAP)));
     const cells = members.map((s) => this.cell(s.key));
+    const span = Math.max(1, ...cells.map((c) => c.span));
+    const cols = Math.max(span, Math.floor((a.w - AREA_PAD * 2 + COL_GAP) / (WIN_W + COL_GAP)));
     const out = new Map<string, { x: number; y: number }>();
-    const { h } = gridCells(cells, cols, out, AREA_PAD, AREA_HEAD + 12);
+    const { w, h } = gridCells(cells, cols, out, AREA_PAD, AREA_HEAD + 12);
     const m: Record<SessionKey, { dx: number; dy: number }> = {};
     for (const [k, p] of out) m[k] = { dx: p.x, dy: p.y };
-    const need = AREA_HEAD + 12 + h + AREA_PAD;
-    return { t: "areaPatch", id, patch: { h: Math.max(a.h, need, AREA_MIN_H) }, members: m };
+    const patch = { w: Math.max(a.w, w + AREA_PAD * 2), h: Math.max(a.h, AREA_HEAD + 12 + h + AREA_PAD, AREA_MIN_H) };
+    return { t: "areaPatch", id, patch, members: m };
   }
 
   private newArea(at?: { x: number; y: number }, rect?: Rect, members: SessionKey[] = []) {
@@ -1507,6 +1628,8 @@ class Canvas implements InputHost, ChromeHost {
     }
     this.commit({ t: "batch", ops: [...ops, { t: "area", id, set: area }] });
     this.selection = new Set([`a:${id}`]);
+    // A new area is never born under the toolbar or past the edge.
+    this.revealRect(area);
     void this.renameArea(id);
   }
 
@@ -1549,6 +1672,7 @@ class Canvas implements InputHost, ChromeHost {
       set: { text, x: Math.round(r.x), y: Math.round(r.y), w: NOTE_W, h: NOTE_H, z: this.topZ() },
     });
     this.selection = new Set([`n:${id}`]);
+    this.revealRect({ x: r.x, y: r.y, w: NOTE_W, h: NOTE_H });
     if (!text) void this.editNote(id);
   }
 
@@ -1619,7 +1743,7 @@ class Canvas implements InputHost, ChromeHost {
 
   private deleteSelection() {
     if (this.viewId === "map") {
-      this.map.deleteSelected();
+      this.map!.deleteSelected();
       return;
     }
     const areas = [...this.selection].filter((i) => i.startsWith("a:")).map((i) => i.slice(2));
@@ -1680,7 +1804,11 @@ class Canvas implements InputHost, ChromeHost {
   /** Bring a window into view when it's off screen. */
   private reveal(key: SessionKey) {
     const r = this.winRect(key);
-    if (!r) return;
+    if (r) this.revealRect(r);
+  }
+
+  /** Brings a rect into view when any of it is off screen or under the bars. */
+  private revealRect(r: Rect) {
     const k = this.view.k;
     const s = this.toScreen(r.x, r.y);
     if (s.x >= 0 && s.y >= this.barH && s.x + r.w * k <= this.size.w && s.y + r.h * k <= this.size.h - STATUS_H) return;
@@ -1706,6 +1834,8 @@ class Canvas implements InputHost, ChromeHost {
     this.layoutSig = "";
     this.sync(this.snapshot);
     v.el.focus({ preventScroll: true });
+    // Opened past the edge of the screen, it comes into view.
+    if (on) this.reveal(key);
   }
 
   private openBeside(key: SessionKey, background = false) {
@@ -1802,7 +1932,19 @@ class Canvas implements InputHost, ChromeHost {
       setClass(v.el, "is-hit", hit);
       setClass(v.el, "is-dim", !!this.query && !hit);
     }
-    if (this.query) this.chrome.say(hits === 1 ? "1 match" : `${hits} matches`, undefined, true);
+    if (this.query && !hits)
+      this.chrome.say(
+        `No sessions match “${this.chrome.search.value.trim()}”`,
+        {
+          label: "Clear",
+          run: () => {
+            this.chrome.search.value = "";
+            this.setQuery("");
+          },
+        },
+        true,
+      );
+    else if (this.query) this.chrome.say(hits === 1 ? "1 match" : `${hits} matches`, undefined, true);
     else if (this.wasSearching) this.chrome.say("");
     this.wasSearching = !!this.query;
   }
@@ -1941,12 +2083,12 @@ class Canvas implements InputHost, ChromeHost {
         return;
       case "node":
         if (hit.custom) {
-          this.map.select(hit.id);
+          this.map!.select(hit.id);
           this.open(
             [
-              { label: "Rename", keys: "↵", run: () => this.map.edit(hit.id) },
+              { label: "Rename", keys: "↵", run: () => this.map!.edit(hit.id) },
               { sep: true },
-              { label: "Delete", keys: "⌫", danger: true, run: () => void this.map.deleteSelected() },
+              { label: "Delete", keys: "⌫", danger: true, run: () => void this.map!.deleteSelected() },
             ],
             at,
             source,
@@ -1956,9 +2098,9 @@ class Canvas implements InputHost, ChromeHost {
         this.groundMenu(at, source, sx, sy);
         return;
       case "link":
-        this.map.select(hit.id);
+        this.map!.select(hit.id);
         this.open(
-          [{ label: "Delete line", keys: "⌫", danger: true, run: () => void this.map.deleteSelected() }],
+          [{ label: "Delete line", keys: "⌫", danger: true, run: () => void this.map!.deleteSelected() }],
           at,
           source,
         );
@@ -2256,7 +2398,7 @@ class Canvas implements InputHost, ChromeHost {
         {
           label: "New node",
           run: () => {
-            this.map.addCustom(Math.round(w.x / GRID) * GRID, Math.round(w.y / GRID) * GRID);
+            this.map!.addCustom(Math.round(w.x / GRID) * GRID, Math.round(w.y / GRID) * GRID);
           },
         },
         { label: "Fit", action: "fit", run: () => this.fit() },
@@ -2372,7 +2514,13 @@ class Canvas implements InputHost, ChromeHost {
   private tipOver(e: PointerEvent) {
     const bar = (e.target as Element | null)?.closest?.(".cv-win-bar");
     clearTimeout(this.tipTimer);
-    if (!bar || e.pointerType !== "mouse" || this.root.classList.contains("is-touch")) {
+    // An expanded window already says all of it, and the tip would sit on its controls.
+    if (
+      !bar ||
+      e.pointerType !== "mouse" ||
+      this.root.classList.contains("is-touch") ||
+      bar.parentElement?.classList.contains("is-expanded")
+    ) {
       this.tip.hidden = true;
       return;
     }
@@ -2580,9 +2728,13 @@ class Canvas implements InputHost, ChromeHost {
     const ops: Op[] = [];
     const dx = Math.round(m.dx);
     const dy = Math.round(m.dy);
+    const moving = new Set(m.items.map((i) => i.item.slice(2)));
+    const taken = new Map<string, Rect[]>();
+    const grow = new Map<string, { w: number; h: number }>();
+    let landed = false;
     for (const it of m.items) {
-      const x = Math.round(it.x + dx);
-      const y = Math.round(it.y + dy);
+      let x = Math.round(it.x + dx);
+      let y = Math.round(it.y + dy);
       if (it.item.startsWith("a:")) ops.push({ t: "areaPatch", id: it.item.slice(2), patch: { x, y } });
       else if (it.item.startsWith("n:")) ops.push({ t: "notePatch", id: it.item.slice(2), patch: { x, y } });
       else {
@@ -2593,13 +2745,61 @@ class Canvas implements InputHost, ChromeHost {
         if (prev && prev !== target) ops.push({ t: "areaPatch", id: prev, patch: {}, members: { [k]: null } });
         if (target) {
           const a = this.doc.areas[target]!;
+          const p = this.landInArea(target, k, x, y, taken, moving, grow);
+          landed ||= p.x !== x || p.y !== y;
+          x = p.x;
+          y = p.y;
           ops.push({ t: "areaPatch", id: target, patch: {}, members: { [k]: { dx: x - a.x, dy: y - a.y } } });
         }
         ops.push({ t: "win", set: { [k]: { ...this.doc.windows[k], x, y } } });
       }
     }
+    for (const [id, size] of grow) ops.push({ t: "areaPatch", id, patch: size });
     this.commit({ t: "batch", ops });
+    // The drop settles into its place in the area instead of jumping there.
+    if (landed || grow.size) this.animateLayout();
     this.afterGesture();
+  }
+
+  /** A window dropped into an area lands inside it, clear of what is already there: the
+   *  nearest free spot to the drop (its pills counted), the area grown to hold it when the
+   *  spot runs past its edge. `taken` and `grow` carry one drop's earlier windows. */
+  private landInArea(
+    id: string,
+    key: SessionKey,
+    x: number,
+    y: number,
+    taken: Map<string, Rect[]>,
+    moving: Set<string>,
+    grow: Map<string, { w: number; h: number }>,
+  ): { x: number; y: number } {
+    const a = this.doc.areas[id]!;
+    const fp = this.footprint(key, 0, 0);
+    const x0 = a.x + AREA_PAD;
+    const y0 = a.y + AREA_HEAD + 12;
+    let busy = taken.get(id);
+    if (!busy) {
+      busy = [];
+      for (const k of Object.keys(a.members)) {
+        const r = this.rects.get(k);
+        if (r && !moving.has(k)) busy.push(this.footprint(k, r.x, r.y));
+      }
+      for (const n of Object.values(this.doc.notes)) busy.push(n);
+      // Walls above and to the left of the inside, so the search stays in.
+      busy.push({ x: x0 - 1e5 - COL_GAP, y: y0 - 5e4, w: 1e5, h: 1e5 });
+      busy.push({ x: x0 - 5e4, y: y0 - 1e5 - COL_GAP, w: 1e5, h: 1e5 });
+      taken.set(id, busy);
+    }
+    const sz = grow.get(id) ?? { w: a.w, h: a.h };
+    const cx = Math.max(x0, Math.min(x, a.x + sz.w - AREA_PAD - fp.w));
+    const cy = Math.max(y0, Math.min(y, a.y + sz.h - AREA_PAD - fp.h));
+    const r = findFree({ x: cx + fp.w / 2, y: cy + fp.h / 2 }, fp.w, fp.h, busy, GRID);
+    const p = { x: Math.max(x0, r.x), y: Math.max(y0, r.y) };
+    busy.push({ ...p, w: fp.w, h: fp.h });
+    const w = Math.max(sz.w, p.x + fp.w + AREA_PAD - a.x);
+    const h = Math.max(sz.h, p.y + fp.h + AREA_PAD - a.y);
+    if (w !== a.w || h !== a.h) grow.set(id, { w, h });
+    return p;
   }
 
   beginResize(item: string): boolean {
@@ -2741,7 +2941,7 @@ class Canvas implements InputHost, ChromeHost {
   }
 
   busyTyping() {
-    return this.editing > 0 || this.map.isEditing || this.map.hasPopover;
+    return this.editing > 0 || !!this.map?.isEditing || !!this.map?.hasPopover;
   }
 
   actions(): ViewShortcut[] {
@@ -2826,7 +3026,7 @@ class Canvas implements InputHost, ChromeHost {
       commit: () => this.commitMap(),
       onStarted: (session, nodeId) => {
         this.pendingStart.set(session, nodeId);
-        const machine = this.map.nodes.get(nodeId)?.label ?? "the machine";
+        const machine = this.map!.nodes.get(nodeId)?.label ?? "the machine";
         this.chrome.say(`Starting on ${machine}`);
       },
       narrow: () => this.phone,
@@ -2841,42 +3041,42 @@ class Canvas implements InputHost, ChromeHost {
   }
 
   nodeRect(id: string) {
-    return this.map.nodeRect(id);
+    return this.map?.nodeRect(id) ?? null;
   }
 
   moveNode(id: string, x: number, y: number) {
-    this.map.moveNode(id, x, y);
+    this.map?.moveNode(id, x, y);
     if (this.viewId === "map") {
-      for (const [k, r] of this.map.rows) if (this.wins.has(k)) this.rects.set(k, r);
+      for (const [k, r] of this.map!.rows) if (this.wins.has(k)) this.rects.set(k, r);
     }
   }
 
   beginLink(id: string) {
-    this.map.beginLink(id);
+    this.map?.beginLink(id);
   }
 
   moveLink(wx: number, wy: number) {
-    this.map.moveLink(wx, wy);
+    this.map?.moveLink(wx, wy);
   }
 
   endLink(target: string | null) {
-    this.map.endLink(target);
+    this.map?.endLink(target);
   }
 
   beginGhost(chip: string, sx: number, sy: number) {
-    this.map.beginGhost(chip, sx, sy);
+    this.map?.beginGhost(chip, sx, sy);
   }
 
   moveGhost(sx: number, sy: number) {
-    this.map.moveGhost(sx, sy);
+    this.map?.moveGhost(sx, sy);
   }
 
   endGhost(target: string | null) {
-    this.map.endGhost(target);
+    this.map?.endGhost(target);
   }
 
   selectNode(id: string | null) {
-    this.map.select(id);
+    this.map?.select(id);
   }
 
   hover(id: string | null) {
@@ -2886,7 +3086,7 @@ class Canvas implements InputHost, ChromeHost {
       for (const [k, v] of this.wins) setClass(v.el, "is-tethered", !!pill && this.pills.get(pill)?.parent === k);
       this.request();
     }
-    if (this.viewId === "map") this.map.setFocus(id?.startsWith("pill:") ? null : id);
+    if (this.viewId === "map") this.map?.setFocus(id?.startsWith("pill:") ? null : id);
   }
 }
 

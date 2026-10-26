@@ -18,12 +18,12 @@ test("phone: one column, the view as a pop-up, and a tap on ↗ opens the sessio
   await expect(page.locator(".cv-view-chip")).toHaveText("View: State");
   await page.locator(".cv-view-chip").tap();
   expect((await menus(page)).at(-1)!.items).toEqual([
-    "My layout",
     "State",
     "Machine",
     "Harness",
     "Repo",
     "Label",
+    "My layout",
     "Map",
   ]);
   await page.locator(".hm").getByRole("menuitemradio", { name: "Machine" }).tap();

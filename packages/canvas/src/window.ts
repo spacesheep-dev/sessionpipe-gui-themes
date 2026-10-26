@@ -8,10 +8,9 @@
 import type { ThemeApi } from "@sessionpipe-gui/theme-types";
 import type { ControlActivity, LabelColor, SessionSummary } from "@sessionpipe-gui/theme-types/api";
 import { Detail } from "./detail";
-import { durShort } from "./events";
-import { repoParts } from "./map";
+import { durShort, toolName } from "./events";
 import type { ViewId } from "./types";
-import { el, ms, oneLine, setClass, setText } from "./util";
+import { el, ms, oneLine, repoParts, setClass, setInline, setText } from "./util";
 
 const KIND_LABEL: Record<string, string> = {
   prompt: "Prompt",
@@ -263,8 +262,10 @@ export class WinView {
         : metaFacts(s, ctx.view);
     const errs = s.counts.toolErrors;
     if (errs > 0 && facts.length >= 2) facts.length = 1;
-    setText(this.metaText, facts.join(" · "));
-    setText(this.metaErr, errs > 0 ? `${facts.length ? " · " : ""}${errs} error${errs === 1 ? "" : "s"}` : "");
+    // Errors as one signal: the red ✕ glyph, the count in the line's own muted ink.
+    setText(this.metaText, `${facts.join(" · ")}${errs > 0 && facts.length ? " · " : ""}`);
+    setText(this.metaErr, errs > 0 ? `${errs} error${errs === 1 ? "" : "s"}` : "");
+    this.metaErr.hidden = errs === 0;
     this.since = sinceOf(s);
     this.tick(ctx.now);
 
@@ -276,7 +277,14 @@ export class WinView {
       this.askText.replaceChildren();
       const message = att.message?.trim() ?? "";
       if (att.kind === "permission" && att.tool) {
-        this.askText.append(document.createTextNode(`${att.tool}: `), el("code", "cv-code", oneLine(message, 220)));
+        // The tool once: a message that already starts with it ("Bash rm -rf dist") loses
+        // the repeat, so the line reads "Bash: rm -rf dist", never "Bash: Bash rm -rf".
+        const rest = message.toLowerCase().startsWith(att.tool.toLowerCase())
+          ? message.slice(att.tool.length).replace(/^[\s:·-]+/, "")
+          : message;
+        const name = toolName(att.tool);
+        this.askText.append(document.createTextNode(rest ? `${name}: ` : name));
+        if (rest) this.askText.append(el("code", "cv-code", oneLine(rest, 220)));
       } else {
         this.askText.append(document.createTextNode(oneLine(message || ASK_WORDS[att.kind] || att.kind, 220)));
       }
@@ -290,7 +298,7 @@ export class WinView {
         textCls += " is-live";
       } else if (s.state === "working") {
         const tool = s.currentTool;
-        text = tool ? `${tool.tool} · ${durShort(Math.max(0, ctx.now - ms(tool.since)))}` : "Thinking";
+        text = tool ? running(tool, ctx.now) : "Thinking";
         textCls += " is-quiet";
       } else if (s.lastAssistant) {
         text = oneLine(s.lastAssistant, 280);
@@ -298,7 +306,7 @@ export class WinView {
         text = oneLine(s.progress?.user ?? s.lastUser, 280);
         textCls += " is-user";
       }
-      setText(this.text, text);
+      setInline(this.text, text, !textCls.includes("is-quiet"));
       this.text.className = textCls;
       this.text.hidden = !text;
     }
@@ -346,7 +354,7 @@ export class WinView {
     // "Bash · 12 s" while a tool runs and nothing is being written.
     const s = this.session;
     if (s.state === "working" && !s.progress?.assistant && s.currentTool && this.text.classList.contains("is-quiet")) {
-      setText(this.text, `${s.currentTool.tool} · ${durShort(Math.max(0, now - ms(s.currentTool.since)))}`);
+      setInline(this.text, running(s.currentTool, now), false);
     }
   }
 
@@ -418,10 +426,24 @@ export class WinView {
     return !!this.detail;
   }
 
-  destroy() {
+  destroy(fade = false) {
     this.detail?.destroy();
-    this.el.remove();
+    if (!fade) {
+      this.el.remove();
+      return;
+    }
+    this.el.classList.add("is-leaving");
+    this.el.removeAttribute("data-key");
+    this.el.inert = true;
+    setTimeout(() => this.el.remove(), 160);
   }
+}
+
+/** "Bash · 12 s" while a tool runs: its name alone for the first moment (a tick that
+ *  reads "0.3 s" is noise), then whole seconds on the GUI's grammar. */
+function running(t: { tool: string; since: string }, now: number): string {
+  const d = Math.max(0, now - ms(t.since));
+  return d < 1500 ? toolName(t.tool) : `${toolName(t.tool)} · ${durShort(Math.floor(d / 1000) * 1000)}`;
 }
 
 function iconBtn(cls: string, svg: string, label: string): HTMLButtonElement {
@@ -470,11 +492,11 @@ function sinceOf(s: SessionSummary): number | undefined {
   return ms(s.lastAt);
 }
 
-/** "now", "12 s", "3 min", "2 h", "3 d". */
+/** "now", "12 s", "3 m", "2 h", "3 d": the GUI's grammar, coarse past the hour. */
 export function short(d: number): string {
   if (d < 5000) return "now";
   if (d < 60_000) return `${Math.floor(d / 1000)} s`;
-  if (d < 3600_000) return `${Math.floor(d / 60_000)} min`;
+  if (d < 3600_000) return `${Math.floor(d / 60_000)} m`;
   if (d < 86_400_000) return `${Math.floor(d / 3600_000)} h`;
   return `${Math.floor(d / 86_400_000)} d`;
 }

@@ -131,7 +131,7 @@ test("control: Allow answers in place (a taller window with two buttons); Deny f
   const win = page.locator('.cv-win[data-state="needs_you"]').first();
   const key = (await win.getAttribute("data-key"))!;
   await expect(win).toHaveClass(/is-ask/);
-  expect(await win.evaluate((e) => (e as HTMLElement).offsetHeight)).toBe(148);
+  expect(await win.evaluate((e) => (e as HTMLElement).offsetHeight)).toBe(132);
   await expect(win.locator(".cv-win-ask-x code")).toHaveText("rm -rf dist && npm run build");
   await win.getByRole("button", { name: "Allow" }).click();
   await expect

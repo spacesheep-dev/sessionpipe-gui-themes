@@ -45,8 +45,10 @@ function iconBtn(cls: string, icon: string, label: string, fn: (b: HTMLButtonEle
   const b = el("button", `icon-btn cv-icon ${cls}`);
   b.type = "button";
   b.innerHTML = icon;
-  b.title = label;
+  // The host's tooltip names it and shows its key in caps ("Tidy" ⇧T); no native title.
   b.setAttribute("aria-label", label.replace(/ · .*$/, ""));
+  const key = / · (.+)$/.exec(label)?.[1];
+  if (key) b.dataset.tipKeys = key;
   b.addEventListener("click", () => fn(b));
   return b;
 }
@@ -93,7 +95,8 @@ export class Chrome {
       b.type = "button";
       b.dataset.view = v.id;
       b.setAttribute("role", "radio");
-      b.title = `${v.label} · ${i + 1}`;
+      b.dataset.tip = v.label;
+      b.dataset.tipKeys = String(i + 1);
       b.addEventListener("click", () => host.setView(v.id));
       this.seg.append(b);
       this.segBtns.set(v.id, b);

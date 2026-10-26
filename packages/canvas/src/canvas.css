@@ -208,7 +208,9 @@
   overflow: hidden;
   text-overflow: ellipsis;
 }
-.cv-win-err {
+/* An error is the red ✕ only; the words stay in the line's muted ink. */
+.cv-win-err::before {
+  content: "✕ ";
   color: var(--err);
 }
 .cv-win-time {
@@ -221,7 +223,7 @@
   min-height: 0;
   display: flex;
   flex-direction: column;
-  padding: 2px 10px 6px var(--cv-lead);
+  padding: 2px 10px 8px var(--cv-lead);
   overflow: hidden;
 }
 .cv-win-text {
@@ -232,8 +234,8 @@
   overflow-wrap: anywhere;
   display: -webkit-box;
   -webkit-box-orient: vertical;
-  -webkit-line-clamp: 3;
-  line-clamp: 3;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
 }
 .cv-win-text.is-live {
   color: var(--fg);
@@ -246,6 +248,7 @@
   content: "› ";
 }
 .cv-win-ask {
+  flex: 1 1 auto;
   display: flex;
   flex-direction: column;
   gap: 8px;
@@ -266,15 +269,22 @@
   font-family: var(--font-mono);
   font-size: 0.95em;
 }
+/* Not answerable here: the request takes one line, "Waiting in the terminal" the next. */
+.cv-win:not(.is-ask) .cv-win-ask-x {
+  -webkit-line-clamp: 1;
+  line-clamp: 1;
+}
 .cv-win-wait {
   margin-top: -6px;
   color: var(--fg-3);
   line-height: 1.4;
 }
+/* Deny and Allow keep one place at the window's foot, however long the request. */
 .cv-win-acts {
   display: flex;
   justify-content: flex-end;
   gap: 8px;
+  margin-top: auto;
 }
 
 /* expanded: the session's rows, the prompt at the bottom */
@@ -308,39 +318,68 @@
 .cv-detail-status {
   color: var(--fg-3);
 }
+/* A row: what happened in words, its detail muted, a tool's time on the right; a prompt
+   heads its turn with the clock; a reply is a paragraph. The clock to the second is the
+   row's tooltip. */
 .cv-row {
-  display: grid;
-  grid-template-columns: 60px 76px minmax(0, 1fr);
-  gap: 0 8px;
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
   min-width: 0;
   color: var(--fg-3);
+  white-space: nowrap;
 }
 .cv-row > span {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
-  white-space: nowrap;
 }
-.cv-row-t {
+.cv-row-l {
+  flex: none;
+  max-width: 45%;
+  color: var(--fg-2);
+}
+.cv-row-x {
+  flex: 1 1 auto;
+}
+.cv-row-e {
+  flex: none;
   color: var(--fg-4);
   font-size: var(--text-xs);
   font-variant-numeric: tabular-nums;
 }
-.cv-row-tool .cv-row-l,
+.cv-row-tool .cv-row-l {
+  color: var(--fg);
+}
+.cv-row-turn {
+  margin-top: 10px;
+}
+.cv-row-turn:first-child {
+  margin-top: 0;
+}
+.cv-row-turn .cv-row-l {
+  color: var(--fg);
+  font-weight: 600;
+}
+.cv-row-turn .cv-row-x {
+  color: var(--fg-2);
+}
 .cv-row-attention .cv-row-l {
   color: var(--fg);
   font-weight: 500;
 }
-.cv-row.is-err .cv-row-x {
+.cv-row.is-err .cv-row-e {
   color: var(--err);
 }
 .cv-row.is-prose {
-  margin: 4px 0;
-}
-.cv-row.is-prose .cv-row-x {
-  white-space: normal;
+  display: block;
+  margin: 2px 0 6px;
   color: var(--fg-2);
+  white-space: normal;
   overflow-wrap: anywhere;
+}
+.cv-row.is-prose > span {
+  overflow: visible;
 }
 .cv-win-ctl {
   flex: none;
@@ -776,6 +815,21 @@
 .spcv .cv-search input {
   color: var(--fg);
 }
+/* The glyph centred on the field's text, not on its own baseline: an inline svg sits on
+   the text's baseline and reads 3 px high, so it is a block in a grid cell here, nudged
+   half a pixel down onto the x-height. */
+.spcv .cv-search .search-icon {
+  display: inline-grid;
+  place-items: center;
+  width: 14px;
+  height: 14px;
+}
+.spcv .cv-search .search-icon svg {
+  display: block;
+  width: 14px;
+  height: 14px;
+  transform: translateY(0.5px);
+}
 .spcv .cv-bar .cv-search-btn,
 .spcv .cv-bar .cv-view-chip {
   display: none;
@@ -1184,25 +1238,135 @@
   font-size: var(--text-sm);
 }
 
+/* ---------- the empty canvas ---------- */
+/* One title, one sentence, the way to the Board: at the optical centre (40 % down), on
+   the ground, no box. */
+.cv-empty {
+  position: absolute;
+  left: 50%;
+  top: 40%;
+  transform: translate(-50%, -50%);
+  width: min(46ch, calc(100% - 32px));
+  text-align: center;
+  pointer-events: auto;
+  z-index: 2;
+}
+.cv-empty[hidden] {
+  display: none;
+}
+.cv-empty-title {
+  margin: 0;
+  color: var(--fg);
+  font-size: var(--text-lg, 15px);
+  font-weight: 600;
+  line-height: var(--lh, 1.45);
+}
+.cv-empty-text {
+  margin: 4px 0 0;
+  color: var(--fg-2);
+  font-size: var(--text-md, 13px);
+  line-height: var(--lh, 1.45);
+}
+.cv-empty-link {
+  display: inline-block;
+  margin-top: 12px;
+  color: var(--fg);
+  font-size: var(--text-md, 13px);
+  font-weight: 500;
+  text-decoration: underline;
+  text-decoration-color: var(--line-2);
+  text-underline-offset: 3px;
+}
+
+/* ---------- the phone: each group one inset table ---------- */
+/* The grouped rows of the board, in the canvas's grouping: a plate per group on the
+   ground, its windows as rows with a hairline between, no box round each; a row keeps
+   only its ↗ (open it; long-press for the menu, and a session is answered inside it);
+   the pills are indented rows under their parent. */
+.cv-plate {
+  position: absolute;
+  left: 0;
+  top: 0;
+  border-radius: var(--radius-pop);
+  background: var(--bg-2);
+  pointer-events: none;
+  transition: opacity var(--dur-fast, 120ms) var(--ease-out);
+}
+.spcv.is-phone .cv-win {
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: inset 0 var(--hairline, 1px) 0 var(--line);
+}
+.spcv.is-phone .cv-win.is-first {
+  box-shadow: none;
+}
+.spcv.is-phone .cv-win:active {
+  background: var(--press);
+}
+.spcv.is-phone .cv-win.is-selected,
+.spcv.is-phone .cv-win:focus-visible {
+  outline: none;
+  background: var(--sel);
+}
+.spcv.is-phone .cv-win-more,
+.spcv.is-phone .cv-win-acts,
+.spcv.is-phone .cv-win-wait {
+  display: none;
+}
+.spcv.is-phone .cv-win-body {
+  overflow: hidden;
+}
+.spcv.is-phone .cv-win-text:not([hidden]),
+.spcv.is-phone .cv-win-ask:not([hidden]) {
+  display: -webkit-box;
+  -webkit-line-clamp: 1;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.spcv.is-phone .cv-pill {
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+}
+
 /* ---------- motion ---------- */
 
-/* A view switch: everything moves over 320 ms; headings and tethers come in after. */
+/* A move: everything slides over 320 ms. A view switch or Tidy (is-regrouping) swaps the
+   headings: the old ones fade out as it starts (an exit: quick, eased in), the new ones
+   and the tethers fade in once it lands. */
 .cv-world.is-tidying .cv-win,
 .cv-world.is-tidying .cv-pill,
-.cv-world.is-tidying .cv-pill-more {
+.cv-world.is-tidying .cv-pill-more,
+.cv-world.is-tidying .cv-head,
+.cv-world.is-tidying .cv-plate {
   transition: transform 320ms var(--ease-out);
 }
+/* The tethers are drawn where things land, so they wait for the landing. */
 .cv-world.is-tidying .cv-tethers,
-.cv-world.is-tidying .cv-head {
+.cv-world.is-regrouping .cv-head:not(.is-leaving),
+.cv-world.is-regrouping .cv-plate {
   opacity: 0;
   transition: none;
+}
+.cv-world .cv-win.is-leaving {
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity var(--dur-exit, 140ms) cubic-bezier(0.4, 0, 1, 1);
+}
+.cv-world .cv-head.is-leaving {
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity var(--dur-exit, 140ms) cubic-bezier(0.4, 0, 1, 1);
 }
 
 @media (prefers-reduced-motion: reduce) {
   .spcv .cv-win,
   .spcv .cv-win.is-new,
+  .spcv .cv-win.is-leaving,
   .spcv .cv-pill,
   .spcv .cv-head,
+  .spcv .cv-plate,
   .spcv .cv-tethers,
   .spcv .cv-world.is-tidying .cv-win,
   .spcv .cv-world.is-tidying .cv-pill,
