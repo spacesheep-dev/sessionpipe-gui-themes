@@ -1,6 +1,6 @@
 {
   "name": "@sessionpipe-gui/theme-office",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Every machine a room, every live session a person at a desk. A sessionpipe GUI theme, drawn with the host's React.",
   "keywords": [
     "sessionpipe",
@@ -35,7 +35,7 @@
     "prepublishOnly": "node scripts/build.mjs --minify"
   },
   "devDependencies": {
-    "@sessionpipe-gui/theme-types": "0.2.0",
+    "@sessionpipe-gui/theme-types": "0.3.0",
     "@types/react": "^18.3.0",
     "@types/react-dom": "^18.3.0"
   }

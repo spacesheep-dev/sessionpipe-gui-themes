@@ -1,7 +1,7 @@
 {
   "id": "paper-serif",
   "name": "Paper Serif",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "kind": "skin",
   "api": 1,
   "description": "Warm paper, a bundled serif (Source Serif 4) for the interface text, square corners, hairlines of one pixel and roomier rows.",

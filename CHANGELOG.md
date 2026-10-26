@@ -6,6 +6,8 @@ All notable changes to the packages in `sessionpipe-gui-themes`. The format foll
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-10-26
+
 ### Changed
 
 - **`@sessionpipe-gui/theme-canvas`**: State, the default view, comes first (keys `1`–`7`
@@ -80,6 +82,7 @@ The first public release, alongside `sessionpipe-gui` 0.1.0.
   `scripts/rename-unscoped.mjs` switches the names to `sessionpipe-gui-<kind>-<id>` in one
   command; a `v*` tag publishes with npm provenance from GitHub Actions (RELEASING.md).
 
-[Unreleased]: https://github.com/spacesheep-dev/sessionpipe-gui-themes/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/spacesheep-dev/sessionpipe-gui-themes/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/spacesheep-dev/sessionpipe-gui-themes/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/spacesheep-dev/sessionpipe-gui-themes/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/spacesheep-dev/sessionpipe-gui-themes/releases/tag/v0.1.0
