@@ -23,10 +23,17 @@ https://misha-air.local:7373/s/claude-code/8c13…?k=…
 
    This writes `~/.config/ping-a-human/config.json`.
 
-2. Install the plugin into the GUI, on the machine that runs the receiver:
+2. Turn the plugin on, on the machine that runs the receiver. It ships inside the GUI, off
+   until enabled (`sessionpipe-gui extras add ping-a-human` says as much):
 
    ```sh
-   sessionpipe-gui plugin add @sessionpipe-gui/plugin-ping-a-human     # from npm (or `sessionpipe-gui extras add ping-a-human`)
+   sessionpipe-gui plugin enable ping-a-human
+   ```
+
+   On a GUI without it, install it instead:
+
+   ```sh
+   sessionpipe-gui plugin add @sessionpipe-gui/plugin-ping-a-human     # from npm
    sessionpipe-gui plugin add ./packages/plugin-ping-a-human           # or this folder, built
    ```
 
