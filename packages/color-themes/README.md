@@ -19,8 +19,8 @@ it actually sits on (`--bg-2`, `--bg-3`), not only on the page.
 
 ## Skins, and these plain files
 
-The GUI now ships **Spacesheep built in as its default skin** (both schemes in one entry
-that follows the appearance), and the same palettes are packaged as skins here:
+The GUI's default skin is **sessionpipe**; these palettes are packaged as skins here, both
+schemes in one entry that follows the appearance:
 [`../skin-spacesheep`](../skin-spacesheep) and [`../skin-spacesheep-vivid`](../skin-spacesheep-vivid)
 (`sessionpipe-gui skin add packages/skin-spacesheep-vivid`). The four JSON files in this
 folder are the **plain-file alternative**: one scheme each, no fonts or shape, dropped

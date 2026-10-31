@@ -20,8 +20,9 @@ npm run lint                 # biome check .
 npm test                     # canvas: Playwright on :7421; plugin: node --test; color-themes: the checker
 ```
 
-Each view has a dev harness that mounts it against a fake `ThemeApi`, so it builds and
-tests without a running GUI (`cd packages/canvas && npm run dev`). To try one in the
+Canvas has a dev harness that mounts it against a fake `ThemeApi`, so it builds and
+tests without a running GUI (`cd packages/canvas && npm run dev`; Office's `npm run dev`
+is a watch build). To try one in the
 real GUI: `sessionpipe-gui view link packages/<id>` and open `/t/<id>`; a plugin with
 `plugin link`, then *Reload plugins*.
 
@@ -33,7 +34,7 @@ packages/<id>/
   package.json               @sessionpipe-gui/<kind>-<id>; files: dist, the manifest, README.md
   src/                       TypeScript; nothing loaded from the network at runtime
   scripts/build.mjs          esbuild → dist/index.js, one ES module
-  dev/                       the harness (views)
+  dev/                       the harness (canvas)
   test/                      Playwright against the harness, or node --test
 ```
 

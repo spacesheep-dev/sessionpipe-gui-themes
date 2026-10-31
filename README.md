@@ -14,7 +14,7 @@ one command. Apache-2.0, like the GUI.
 |---|---|---|
 | [`packages/canvas`](packages/canvas) | view, `/t/canvas` | Every live session as a window on an infinite canvas. Drag, resize, zoom; a **Map** draws the devices, accounts, machines and repos around the sessions in lanes; drag an account onto a machine to start a session there. Layout kept by the GUI, so it is the same on every device. Bundled with the GUI. Experimental. |
 | [`packages/office`](packages/office) | view, `/t/office` | Every machine a room, every live session a person at a desk, every subagent a helper at a side table. Posture is the state, amber marks who needs you. An isometric floor by default, figures on request. Drawn with the host's React, so the bundle carries none. Bundled with the GUI. Experimental. |
-| [`packages/skin-spacesheep`](packages/skin-spacesheep) | skin | The Spacesheep palette as one `skin.json`, both schemes in one entry. The GUI ships this palette built in as its default skin; this is the installable copy, for an older GUI or as the starting point for a palette of your own. |
+| [`packages/skin-spacesheep`](packages/skin-spacesheep) | skin | The Spacesheep palette as one `skin.json`, both schemes in one entry. The GUI's default skin is `sessionpipe`; this installs like any skin, or is the starting point for a palette of your own. |
 | [`packages/skin-spacesheep-vivid`](packages/skin-spacesheep-vivid) | skin | Spacesheep with the surfaces carrying the brand: deep indigo cards on a violet-black page, soft lavender on warm cream, lavender hairlines, a flame highlight for search marks. |
 | [`packages/skin-paper-serif`](packages/skin-paper-serif) | skin | What a color theme cannot carry: a bundled serif (Source Serif 4, OFL) for the interface text, 2 px corners, one-pixel hairlines, roomier rows, on warm paper with a terracotta accent. Light only. Also holds `scripts/preview.mjs`, which renders any skin's `preview.png` against a GUI in demo mode. |
 | [`packages/color-themes`](packages/color-themes) | color themes | The Spacesheep and Spacesheep Vivid palettes as plain token JSON (`<stateDir>/color-themes/*.json`), with the checker that verifies every text-on-ground ratio and the notes on where each colour comes from. |
@@ -49,7 +49,7 @@ the rest come from npm, one line each, or all at once with `sessionpipe-gui extr
 |---|---|---|
 | Canvas | `@sessionpipe-gui/theme-canvas` | bundled with the GUI (`sessionpipe-gui view add @sessionpipe-gui/theme-canvas` on an older GUI) |
 | Office | `@sessionpipe-gui/theme-office` | bundled with the GUI |
-| Spacesheep | `@sessionpipe-gui/skin-spacesheep` | built in as the default skin (`sessionpipe-gui skin add @sessionpipe-gui/skin-spacesheep` on an older GUI) |
+| Spacesheep | `@sessionpipe-gui/skin-spacesheep` | `sessionpipe-gui skin add @sessionpipe-gui/skin-spacesheep` |
 | Spacesheep Vivid | `@sessionpipe-gui/skin-spacesheep-vivid` | `sessionpipe-gui skin add @sessionpipe-gui/skin-spacesheep-vivid` |
 | Paper Serif | `@sessionpipe-gui/skin-paper-serif` | `sessionpipe-gui skin add @sessionpipe-gui/skin-paper-serif` |
 | ping-a-human | `@sessionpipe-gui/plugin-ping-a-human` | `npx ping-a-human setup` once, then `sessionpipe-gui plugin add @sessionpipe-gui/plugin-ping-a-human` and *Reload plugins* on the Views page |
