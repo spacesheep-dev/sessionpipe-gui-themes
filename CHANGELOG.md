@@ -8,9 +8,10 @@ All notable changes to the packages in `sessionpipe-gui-themes`. The format foll
 
 ### Changed
 
-- **`@sessionpipe-gui/theme-types`**: the GUI's contracts as of 0.7.0: `--tint` and
+- **`@sessionpipe-gui/theme-types`**: the GUI's contracts as of 0.7.4: `--tint` and
   `--tint-fg` among the color tokens, `ThemeApi.control.compose`, `bundled` and `disabled`
-  on the installed skin and plugin listings, and the 0.7.0 wire types in `api.ts`.
+  on the installed skin and plugin listings, and the 0.7.4 wire types in `api.ts`
+  (`nothingHappened` and `isEmptySession` among them).
 
 ## [0.3.0] - 2026-10-26
 
