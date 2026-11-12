@@ -26,7 +26,7 @@ export interface StoredEvent extends ProtocolEvent {
   preview?: Record<string, number>;
 }
 
-export type EventSource = "http" | "outbox" | "demo";
+export type EventSource = "http" | "outbox" | "demo" | "spacesheep";
 
 /** The sessionpipe v1 envelope. Kept structural (not imported from sessionpipe-core) so
  *  the web bundle never pulls the core package in. */
@@ -376,6 +376,7 @@ export interface MachineControl {
   mode?: MachineMode;
   folders?: string[];
   harnesses?: string[];
+  /** Hello `modes`: the delivery modes the machine has, among `DELIVERY_MODES`. */
   modes?: string[];
   version?: string;
   accounts?: HarnessAccount[];
@@ -384,6 +385,10 @@ export interface MachineControl {
   /** Pairing or hello `key_types`: the kinds of key this machine takes. Absent (an older
    *  daemon) means passkeys only, so the app never offers it a device key. */
   keyTypes?: KeyType[];
+  /** A machine paired on a spacesheep account this GUI reads through (docs/rfcs/08):
+   *  commands to it are signed for that receiver's rp id and carried by it; its keys here
+   *  are ids only. Absent for a machine paired with this receiver. */
+  remote?: { via: "spacesheep"; origin: string; rpId: string };
   /** Messages queued for it and not yet finally acked. */
   queued: number;
   /** Hello `files: true`: the machine takes `files` on a `start` (CONTROL.md §3.1, §6). */
@@ -412,6 +417,14 @@ export interface MachineControl {
   handoff?: boolean;
 }
 
+/** How a machine hands a message to a session, the first that fits (sessionpipe CONTROL.md
+ *  §6): a hello's `modes` lists the ones it has, an ack's `mode` names the one it used.
+ *  `inbox` (sessionpipe 0.13) is a message written into a live, idle Claude Code session's
+ *  own local inbox, answered by that session in its own turn: its reply is the session's
+ *  own, where a `fork`'s is a copy's. */
+export const DELIVERY_MODES = ["sdk", "waiter", "turn", "inbox", "api", "resume", "fork"] as const;
+export type DeliveryMode = (typeof DELIVERY_MODES)[number];
+
 /** A machine's mode, the person's choice at its own terminal (CONTROL.md §2): `safe`,
  *  nothing that needs approval runs unattended; `auto`, the harness's auto mode; `inherit`
  *  (sessionpipe 0.10), no permission flag, so a session runs as the person's own do there,
@@ -421,12 +434,18 @@ export type MachineMode = "safe" | "auto" | "inherit";
 /** A harness account signed in on a machine, from its pairing and hello (CONTROL.md §2): a
  *  label for `session.account_id`, never checked against anything. `email` when it signs in
  *  with one; `name` instead for one with no email (sessionpipe 0.10: a Claude Code home on
- *  another API, named by its endpoint's host, `api.z.ai`). At least one of the two is set. */
+ *  another API, named by its endpoint's host, `api.z.ai`). At least one of the two is set.
+ *  `signedIn` (hello `signed_in`, sessionpipe 0.13.3): whether the harness's command line
+ *  is signed in to the account as the daemon sees it, which is what a resume runs with.
+ *  `false` means a message to a session of that account would fail until someone runs
+ *  `claude auth login` on the machine; absent is unknown (an older daemon, or one that
+ *  could not tell), never signed out. */
 export interface HarnessAccount {
   harness: string;
   id: string;
   email?: string;
   name?: string;
+  signedIn?: boolean;
 }
 
 /** What an account is called: its email, else its name, else nothing. */
@@ -1224,6 +1243,33 @@ export interface Digest {
   totals: DigestGroup;
 }
 
+/** Info.sources.spacesheep (server/sources/spacesheep.ts): the account this GUI reads
+ *  through, how the relay is doing, and what it has brought in. */
+export interface SpacesheepSourceStatus {
+  origin: string;
+  email: string;
+  connectedAt: string;
+  /** Events handed to the store since start. */
+  events: number;
+  /** The relay cursor: the last seq read. */
+  cursor: number;
+  /** `ok` after a good poll; `unauthorized` when the key was revoked; `offline` when the
+   *  origin can't be reached; `gap` when the relay no longer holds the cursor's past. */
+  state: "starting" | "ok" | "unauthorized" | "offline" | "gap";
+  lastAt?: string;
+  lastError?: string;
+  /** The machines paired on spacesheep, as its hellos last said (names only here). */
+  machines: string[];
+}
+
+/** POST ROUTES.ui.spacesheep (connect): what the page shows while the person confirms. */
+export interface SpacesheepConnectStart {
+  code: string;
+  digits: string;
+  url: string;
+  expiresAt: string;
+}
+
 export interface Info {
   name: "sessionpipe-gui";
   version: string;
@@ -1242,6 +1288,8 @@ export interface Info {
     http: true;
     outbox: { path: string; sessions: number; enabled: boolean; events?: number } | null;
     demo: boolean;
+    /** A spacesheep account used as a backend (RFC 08): absent on older servers, null when off. */
+    spacesheep?: SpacesheepSourceStatus | null;
   };
   /** `bytes` is everything under `dir`: the event files, plus `attachments` (the images
    *  uploaded from the composer, ROUTES.ui.attachments). Absent on older servers. */
@@ -1500,6 +1548,7 @@ export interface ControlActivity {
   at: string;
   expiresAt: string;
   outcome?: ControlOutcome;
+  /** The delivery mode the machine acked, one of `DELIVERY_MODES`. */
   mode?: string;
   code?: string;
   detail?: string;
@@ -1507,6 +1556,11 @@ export interface ControlActivity {
   replySeq?: number;
   /** The session the final ack named (a fork, or the session a start created), when it differs. */
   ackSession?: string;
+  /** The final ack's `copy_of` (sessionpipe 0.13, CONTROL.md §6 `prompt`, §10): the answer
+   *  came from a copy of the session the command named, not from it. This is that session,
+   *  as the machine names it; `ackSession` is then the copy, and `detail` says why one was
+   *  made. Absent: the session itself answered, or the daemon predates the field. */
+  copyOf?: SessionKey;
   takenAt?: string;
   ackedAt?: string;
   /** A start's folder, as signed: the starting page shows it and "Edit and start again" puts it back. */
@@ -1691,6 +1745,12 @@ export const ROUTES = {
     rotateToken: "/api/ui/token/rotate",
     /** POST { on: boolean } → Info.sources.demo */
     demo: "/api/ui/demo",
+    /** GET → { link: SpacesheepSourceStatus | null, pending: SpacesheepConnectStart | null };
+     *  POST { origin? } → SpacesheepConnectStart (then the server polls and connects);
+     *  DELETE → disconnected (the key is forgotten here; revoke it on spacesheep to be sure).
+     *  POST …/device { key } → the app's device key asked to be trusted there: { code, devicesUrl, trustedOn };
+     *  GET …/device?id= → { trustedOn, machines, pending }. */
+    spacesheep: "/api/ui/spacesheep",
     /** GET → image/svg+xml: the LAN URL with the UI key, for a phone camera. */
     qr: "/api/ui/qr.svg",
     /** Everything under it is the control channel's UI side (server/control/README.md),
