@@ -14,7 +14,10 @@
 // the state dir, the network, the machine. Install only plugins you trust.
 //
 // Three kinds of extension share one installer (`sessionpipe-gui <kind> add|link|remove|list`):
-// views (theme.json, shared/theme-api.ts), skins (skin.json, coming) and plugins (this file).
+// views (theme.json, shared/theme-api.ts), skins (skin.json, shared/skin-api.ts) and
+// plugins (this file). A plugin that ships with the GUI (dist/bundled/plugins/<id>) is
+// listed `bundled` and stays off until the person enables it: it runs code and may reach
+// out of the machine, so nothing it could do happens unasked.
 //
 // Versioning: `PLUGIN_API_VERSION` is bumped on a breaking change; a manifest's `api`
 // says which version the plugin was written for; the host refuses a newer one.
@@ -117,6 +120,7 @@ export type PluginStatus = "active" | "error" | "inactive";
 
 /** Server-side listing: GET /api/ui/plugins. */
 export interface InstalledPlugin extends PluginManifest {
+  /** `inactive` with `disabled: true` is a plugin turned off (every bundled one, until enabled). */
   status: PluginStatus;
   /** Why it is not running (bad manifest, api too new, activate threw, …). */
   error?: string;
@@ -124,6 +128,13 @@ export interface InstalledPlugin extends PluginManifest {
   dir?: string;
   /** Linked from a folder for development. */
   linked?: boolean;
+  /** Shipped with the GUI (dist/bundled/plugins/<id>), not installed by the person: listed
+   *  after their own installs (an install of the same id overrides it), `source: "bundled"`,
+   *  cannot be removed, off until enabled. */
+  bundled?: boolean;
+  /** Not activated: turned off in config.json (`disabled`), or bundled and not yet turned
+   *  on (`enabled`). Enable on the Views page or with `sessionpipe-gui plugin enable <id>`. */
+  disabled?: boolean;
   /** Current setting values with defaults filled in; `secret` fields masked ("••••" + last 4). */
   values?: Record<string, unknown>;
 }
@@ -135,6 +146,8 @@ export const PLUGIN_ROUTES = {
   reload: "/api/ui/plugins/reload",
   /** PUT /api/ui/plugins/:id/settings (loopback) { key: value, … } → { settings } (masked) */
   settings: "/api/ui/plugins",
+  /** POST /api/ui/plugins/:id/enable | /disable (loopback) → { plugins }: remembered in config.json */
+  toggle: "/api/ui/plugins",
 } as const;
 
 export const PLUGIN_ID_RE = /^[a-z][a-z0-9-]{1,40}$/;

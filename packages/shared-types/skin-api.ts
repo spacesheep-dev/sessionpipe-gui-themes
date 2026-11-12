@@ -107,9 +107,17 @@ export interface InstalledSkin {
   preview?: string;
   /** `/skins/<id>/` for a package: `fonts[].src`, `css` and `preview` resolve against it. */
   url?: string;
-  /** Where it came from: the installer's source, or the color-theme file's name. */
+  /** Where it came from: the installer's source, the color-theme file's name, or
+   *  "bundled" for a package that ships with the GUI. */
   origin?: string;
   linked?: boolean;
+  /** Shipped with the GUI (dist/bundled/skins/<id>), not installed by the person: listed
+   *  after their own installs (an install of the same id overrides it), cannot be removed,
+   *  only disabled (`sessionpipe-gui skin disable <id>`). */
+  bundled?: boolean;
+  /** Turned off (config.json `disabled`, as `skin:<id>`): kept in the list so a terminal
+   *  can show it, left out of the appearance popover, its files not served. */
+  disabled?: boolean;
   /** On disk; loopback only. */
   dir?: string;
   /** Why it cannot be applied; listed so the problem shows. */
