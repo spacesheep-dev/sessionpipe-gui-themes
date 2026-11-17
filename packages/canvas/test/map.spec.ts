@@ -126,6 +126,137 @@ test("control: Enter sends a prompt and the message's lifecycle renders above th
   expect(calls).toContainEqual({ kind: "send", args: [key, "Run the e2e suite"] });
 });
 
+test("control: a send nobody can vouch for is said in words, not as its raw outcome", async ({ page }) => {
+  await open(page, SMALL);
+  const win = page.locator('.cv-win[data-state="working"]').filter({ hasText: "misha-air" }).first();
+  const key = (await win.getAttribute("data-key"))!;
+  await win.locator(".cv-win-title").dblclick();
+  // Rows as the GUI (0.8.2 and later) hands them to a view: `unconfirmed` is newer than this
+  // repo's copy of the wire types, so they go in as plain data.
+  await page.evaluate((session) => {
+    const w = window.__harness.world;
+    const at = new Date().toISOString();
+    const rows = [
+      { id: "msg_word", outcome: "unconfirmed" },
+      { id: "msg_job", outcome: "unconfirmed", code: "no_job" },
+      { id: "msg_gone", outcome: "failed", code: "untracked" },
+    ].map((r) => ({ machineId: "m_misha-air", kind: "prompt", session, text: r.id, at, expiresAt: at, ...r }));
+    w.control = [...(rows as unknown as typeof w.control), ...w.control];
+    w.onChange();
+  }, key);
+  const state = (id: string) => page.locator(`.cv-win[data-key="${key}"] .cv-act[data-message="${id}"] .cv-act-state`);
+  await expect(state("msg_word")).toHaveText("No word · misha-air took it and said nothing more");
+  await expect(state("msg_job")).toHaveText("Not followed · spacesheep didn't say which job it is");
+  await expect(state("msg_gone")).toHaveText("Not followed · sent through an account that's no longer connected");
+  const row = (id: string) => page.locator(`.cv-win[data-key="${key}"] .cv-act[data-message="${id}"]`);
+  // Not known to have failed, so not shown as a failure.
+  await expect(row("msg_gone")).toHaveAttribute("data-outcome", "untracked");
+  // The same row without the code is a failure like any other, and is read again.
+  await page.evaluate(() => {
+    const w = window.__harness.world;
+    w.control = w.control.map((a) => (a.id === "msg_gone" ? { ...a, code: undefined } : a));
+    w.onChange();
+  });
+  await expect(state("msg_gone")).toHaveText("Failed · the path errored");
+  await expect(row("msg_gone")).toHaveAttribute("data-outcome", "failed");
+});
+
+test("control: a send nobody heard the answer to says it may have been sent", async ({ page }) => {
+  await open(page, SMALL);
+  const win = page.locator('.cv-win[data-state="working"]').filter({ hasText: "misha-air" }).first();
+  const key = (await win.getAttribute("data-key"))!;
+  await win.locator(".cv-win-title").dblclick();
+  // Rows as the GUI's account/unheard.ts hands them over: `unheard` is newer than this repo's
+  // copy of the wire types, so they go in as plain data. The window lists three rows, so each
+  // step puts in at most three, in place of the session's others.
+  const put = (rows: Record<string, unknown>[]) =>
+    page.evaluate(
+      ({ session, rows }) => {
+        const w = window.__harness.world;
+        const at = new Date().toISOString();
+        const full = rows.map((r) => ({
+          machineId: "m_misha-air",
+          kind: "prompt",
+          session,
+          text: r.id,
+          at,
+          expiresAt: at,
+          ...r,
+        }));
+        w.control = [...(full as unknown as typeof w.control), ...w.control.filter((x) => x.session !== session)];
+        w.onChange();
+      },
+      { session: key, rows },
+    );
+  const state = (id: string) => page.locator(`.cv-win[data-key="${key}"] .cv-act[data-message="${id}"] .cv-act-state`);
+  const row = (id: string) => page.locator(`.cv-win[data-key="${key}"] .cv-act[data-message="${id}"]`);
+  const why = "spacesheep did not answer in time.";
+  await put([
+    { id: "msg_asking", code: "hub_unknown", detail: why, unheard: { state: "asking" } },
+    { id: "msg_unknown", outcome: "unconfirmed", code: "hub_unknown", detail: why, unheard: { state: "unknown" } },
+    {
+      id: "msg_unsent",
+      outcome: "failed",
+      code: "never_started",
+      detail: "the machine is busy",
+      unheard: { state: "unsent", status: 409 },
+    },
+  ]);
+  const maybe = "May have been sent · spacesheep did not answer in time. Look at the session before sending it again";
+  await expect(state("msg_asking")).toHaveText(maybe);
+  await expect(state("msg_unknown")).toHaveText(maybe);
+  await expect(state("msg_unsent")).toHaveText("Not sent · the machine is busy");
+  // Still being asked about: neither queued nor failed. Known not sent: shown as an error.
+  await expect(row("msg_asking")).toHaveAttribute("data-outcome", "unheard");
+  await expect(row("msg_unsent")).toHaveAttribute("data-outcome", "failed");
+  // The cut line is whole on hover.
+  await expect(state("msg_asking")).toHaveAttribute("title", maybe);
+  // The app's words for it change while the row stays unheard: the row is drawn again.
+  await page.evaluate(() => {
+    const w = window.__harness.world;
+    w.control = w.control.map((a) => (a.id === "msg_asking" ? { ...a, detail: "spacesheep is restarting" } : a));
+    w.onChange();
+  });
+  await expect(state("msg_asking")).toHaveText(
+    "May have been sent · spacesheep is restarting. Look at the session before sending it again",
+  );
+  // No detail of its own (an empty one counts as none): the app's reason is said, and words
+  // that end in their own stop get no second one.
+  await put([
+    { id: "msg_blank", code: "hub_unknown", detail: "", unheard: { state: "unknown", reason: "the hub timed out" } },
+    { id: "msg_asked", code: "hub_unknown", detail: "did it start?", unheard: { state: "asking" } },
+    { id: "msg_reason", detail: " ", unheard: { state: "unsent", reason: "spacesheep is down" } },
+  ]);
+  await expect(state("msg_blank")).toHaveText(
+    "May have been sent · the hub timed out. Look at the session before sending it again",
+  );
+  await expect(state("msg_asked")).toHaveText(
+    "May have been sent · did it start? Look at the session before sending it again",
+  );
+  await expect(state("msg_reason")).toHaveText("Not sent · spacesheep is down");
+  // Known not sent, worded by spacesheep's status and code the way the GUI's sendErrorWords
+  // words them.
+  await put([
+    { id: "msg_refused", code: "bad_session", detail: "x", unheard: { state: "unsent", status: 422 } },
+    { id: "msg_unpaired", code: "not_found", detail: "x", unheard: { state: "unsent", status: 404 } },
+    { id: "msg_key", code: "spacesheep_unauthorized", unheard: { state: "unsent", status: 401 } },
+  ]);
+  await expect(state("msg_refused")).toHaveText("Not sent · bad session");
+  await expect(state("msg_unpaired")).toHaveText("Not sent · this machine is no longer paired here");
+  await expect(state("msg_key")).toHaveText(
+    "Not sent · spacesheep no longer takes this app's key: connect again in Settings → App",
+  );
+  // The two refusals the GUI's account code itself settles a row with, in the GUI's words.
+  await put([
+    { id: "msg_old", code: "too_old", unheard: { state: "unsent", status: 422 } },
+    { id: "msg_confirm", code: "confirm_required", unheard: { state: "unsent", status: 422 } },
+  ]);
+  await expect(state("msg_old")).toHaveText("Not sent · signed too long ago; send it again");
+  await expect(state("msg_confirm")).toHaveText(
+    "Not sent · held for you to confirm; send it from the session's page to confirm it",
+  );
+});
+
 test("control: Allow answers in place (a taller window with two buttons); Deny from the menu", async ({ page }) => {
   await open(page, SMALL);
   const win = page.locator('.cv-win[data-state="needs_you"]').first();
