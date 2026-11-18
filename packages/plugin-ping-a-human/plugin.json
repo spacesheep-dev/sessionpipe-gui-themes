@@ -28,7 +28,7 @@
       "label": "Ask Allow / Deny on a permission prompt",
       "type": "boolean",
       "default": true,
-      "help": "The tap becomes a suggestion in the GUI; nothing is sent to the machine until you confirm it with your passkey."
+      "help": "The tap becomes a suggestion in the GUI; nothing is sent to the machine until you confirm it with your passkey. A question from Claude Code gets a plain message instead: it is answered on its computer."
     },
     {
       "key": "quietHours",
