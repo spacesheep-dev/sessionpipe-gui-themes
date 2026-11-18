@@ -240,6 +240,35 @@ describe("ping-a-human plugin", () => {
     h2.deactivate();
   });
 
+  it("Claude Code's question (AskUserQuestion) is a plain message, never Allow / Deny", async () => {
+    const ch = fakeChannel();
+    ch.setReply({ status: "answered", answer: "Allow", respondent: { id: "1", name: "Misha" } });
+    const ask = { ...permission("perm-q"), tool: "AskUserQuestion", message: "Which branch?" };
+    const s = session({ openAttentions: [ask] });
+    const f = fakeApi({ botToken: TOKEN, chatId: "42", minSilenceS: 0 }, { [s.key]: s });
+    const handle = await createPlugin({ createChannel: () => ch }).activate(f.api);
+    f.emit({ kind: "session", session: s });
+    await tick();
+    await tick();
+    assert.equal(ch.sent.length, 1);
+    assert.equal(ch.sent[0].choices, undefined);
+    assert.equal(
+      ch.sent[0].message,
+      "🔔 Needs you · misha-air\nAskUserQuestion: Which branch? · answer it on its computer\nhttp://10.0.0.5:7373/s/claude-code/abc?k=key",
+    );
+    assert.equal(f.suggestions.length, 0);
+    handle.deactivate();
+
+    // Dry run says it would send, not that it would ask Allow / Deny.
+    const f2 = fakeApi({ dryRun: true, minSilenceS: 0 }, { [s.key]: s });
+    const h2 = await createPlugin({ createChannel: () => fakeChannel() }).activate(f2.api);
+    f2.emit({ kind: "session", session: s });
+    await tick();
+    assert.ok(f2.logs.some((l) => l.includes("would send")));
+    assert.ok(!f2.logs.some((l) => l.includes("would ask")));
+    h2.deactivate();
+  });
+
   it("waits minSilenceS, sends nothing when the prompt closes meanwhile, and deactivate cancels the wait", async () => {
     const ch = fakeChannel();
     const s = session({ openAttentions: [permission("perm-5")] });

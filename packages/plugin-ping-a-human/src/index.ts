@@ -2,7 +2,9 @@
 // ping-a-human for the sessionpipe GUI: a Telegram message when a session needs you,
 // through ping-a-human's channel (npx ping-a-human setup once). On a permission prompt
 // the message carries Allow / Deny buttons; the tap comes back as a *suggestion* beside
-// the prompt in the GUI, which a person confirms with their passkey. This plugin never
+// the prompt in the GUI, which a person confirms with their passkey (Claude Code's own
+// question, AskUserQuestion, is the exception: a plain message, answered on its computer,
+// since its answer is an option Allow / Deny cannot carry). This plugin never
 // answers anything itself: the receiver holds no key, and neither does it.
 //
 // Shape: `createPlugin(deps)` builds the plugin around a channel factory, so tests hand
@@ -97,6 +99,12 @@ const attentionKind = (a: Attention): EventKind | null => {
       return null;
   }
 };
+
+/** Claude Code's question to the person (AskUserQuestion), asked as a permission. Its
+ *  answer is the option chosen, which Allow / Deny cannot carry, so the GUI refuses a
+ *  suggestion for it: it is answered on its computer. */
+export const isQuestion = (a: Pick<Attention, "kind" | "tool">): boolean =>
+  a.kind === "permission" && a.tool === "AskUserQuestion";
 
 const EMOJI: Record<EventKind, string> = {
   needs_you: "🔔",
@@ -217,10 +225,12 @@ export function createPlugin(deps: Deps): Plugin {
           tracked.delete(a.attentionId); // answered at the desk while we waited
           return;
         }
-        const line = `${a.tool ?? a.kind}: ${a.message ?? title(session)}`;
+        const question = isQuestion(a);
+        const line = `${a.tool ?? a.kind}: ${a.message ?? title(session)}${question ? " · answer it on its computer" : ""}`;
         const text = formatMessage(EMOJI[kind], HEAD[kind], session.machine, line, api.sessions.url(key));
         const answerable = a.answerable ?? !a.attentionId.startsWith("notif-");
-        if (a.kind === "permission" && answerable && settings.askOnPermission) ask(session, a, text);
+        // A question gets the plain message: an Allow / Deny tap could not answer it.
+        if (a.kind === "permission" && !question && answerable && settings.askOnPermission) ask(session, a, text);
         else void send(text);
       };
 
