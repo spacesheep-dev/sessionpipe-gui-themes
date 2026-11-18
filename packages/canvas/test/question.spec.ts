@@ -24,7 +24,10 @@ test("control: a question offers no Allow / Deny, in the window or its menu, and
   await expect(win.getByRole("button", { name: "Allow" })).toBeHidden();
   await expect(win.getByRole("button", { name: "Deny" })).toBeHidden();
   const machine = await page.evaluate((k) => window.__harness.world.sessions().get(k)!.machine, key);
-  await expect(win.locator(".cv-win-wait")).toHaveText(`Answer it on ${machine || "its computer"}.`);
+  expect(machine).toBeTruthy();
+  await expect(win.locator(".cv-win-wait")).toHaveText(`Answer it on ${machine}`);
+  // One line, however long the machine's name.
+  expect(await win.locator(".cv-win-wait").evaluate((e) => getComputedStyle(e).whiteSpace)).toBe("nowrap");
 
   await win.locator(".cv-win-meta").click({ button: "right" });
   const m = (await menus(page)).at(-1)!;

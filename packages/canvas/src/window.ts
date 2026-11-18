@@ -299,7 +299,7 @@ export class WinView {
       }
       this.askActs.hidden = !this.answerable;
       this.wait.hidden = this.answerable;
-      setText(this.wait, isQuestion(att) ? `Answer it on ${s.machine || "its computer"}.` : "Waiting in the terminal");
+      setText(this.wait, isQuestion(att) ? `Answer it on ${s.machine || "its computer"}` : "Waiting in the terminal");
       this.text.hidden = true;
     } else {
       this.ask.hidden = true;
