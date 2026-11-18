@@ -278,6 +278,10 @@
   margin-top: -6px;
   color: var(--fg-3);
   line-height: 1.4;
+  /* One line, however long the machine's name in "Answer it on …". */
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 /* Deny and Allow keep one place at the window's foot, however long the request. */
 .cv-win-acts {
