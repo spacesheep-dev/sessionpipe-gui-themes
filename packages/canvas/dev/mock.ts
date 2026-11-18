@@ -52,6 +52,8 @@ const ASKS: { kind: Attention["kind"]; tool?: string; message: string }[] = [
   { kind: "question", message: "Should the retry cap be five attempts or unlimited with a ceiling?" },
   { kind: "error", message: "ENOSPC: no space left on device while writing the outbox" },
   { kind: "elicitation", message: "Which port should the dev server use?" },
+  // Claude Code's question, asked as a permission: answered on its computer, never by Allow.
+  { kind: "permission", tool: "AskUserQuestion", message: "Cap the retries at five attempts, or no cap?" },
 ];
 const TITLES = [
   "Refactor the receiver's flush path",

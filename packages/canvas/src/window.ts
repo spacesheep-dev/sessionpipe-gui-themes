@@ -12,6 +12,15 @@ import { durShort, toolName } from "./events";
 import type { ViewId } from "./types";
 import { el, ms, oneLine, repoParts, setClass, setInline, setText } from "./util";
 
+/** Claude Code's question to the person (AskUserQuestion), asked as a permission. */
+export const isQuestion = (a: { kind?: string; tool?: string } | undefined): boolean =>
+  a?.kind === "permission" && a.tool === "AskUserQuestion";
+
+/** A permission Allow / Deny can answer: not a question, whose answer is the option chosen,
+ *  which neither carries. It is answered on its computer. */
+export const allowAnswers = (a: { kind?: string; tool?: string } | undefined): boolean =>
+  a?.kind === "permission" && !isQuestion(a);
+
 const KIND_LABEL: Record<string, string> = {
   prompt: "Prompt",
   "permission.answer": "Answer",
@@ -179,7 +188,7 @@ export class WinView {
   /** Whether it needs you and Allow / Deny can be answered from here: a taller window. */
   get answerable(): boolean {
     const att = this.session.openAttentions[0];
-    return this.session.state === "needs_you" && att?.kind === "permission" && this.canControl;
+    return this.session.state === "needs_you" && allowAnswers(att) && this.canControl;
   }
 
   update(s: SessionSummary, ctx: WinContext) {
@@ -290,6 +299,7 @@ export class WinView {
       }
       this.askActs.hidden = !this.answerable;
       this.wait.hidden = this.answerable;
+      setText(this.wait, isQuestion(att) ? `Answer it on ${s.machine || "its computer"}.` : "Waiting in the terminal");
       this.text.hidden = true;
     } else {
       this.ask.hidden = true;
@@ -397,7 +407,7 @@ export class WinView {
   answer(decision: "allow" | "deny"): Promise<void> | void {
     const att = this.session.openAttentions[0];
     if (!att) return;
-    if (att.kind === "permission" && this.canControl && this.api.control) {
+    if (allowAnswers(att) && this.canControl && this.api.control) {
       return this.run(() => this.api.control!.answer(this.key, att.attentionId, decision));
     }
     this.hooks.onOpen();

@@ -93,7 +93,7 @@ import {
   setText,
   svg,
 } from "./util";
-import { WinView } from "./window";
+import { allowAnswers, WinView } from "./window";
 
 const LOCAL_VIEW = "view";
 const LOCAL_MINIMAP = "minimap";
@@ -842,7 +842,7 @@ class Canvas implements InputHost, ChromeHost {
 
   private answerable(s: SessionSummary): boolean {
     const att = s.openAttentions[0];
-    if (s.state !== "needs_you" || att?.kind !== "permission" || !this.api.control) return false;
+    if (s.state !== "needs_you" || !allowAnswers(att) || !this.api.control) return false;
     return this.api.control.availability({ session: s.key }).ok;
   }
 
