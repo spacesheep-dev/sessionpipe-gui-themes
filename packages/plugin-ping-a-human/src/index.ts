@@ -85,7 +85,14 @@ export function formatMessage(
   return `${emoji} ${head}${machine ? ` · ${machine}` : ""}\n${line}\n${url}`;
 }
 
+/** Claude Code's question to the person (AskUserQuestion), asked as a permission. Its
+ *  answer is the option chosen, which Allow / Deny cannot carry, so the GUI refuses a
+ *  suggestion for it: it is answered on its computer. */
+export const isQuestion = (a: Pick<Attention, "kind" | "tool">): boolean =>
+  a.kind === "permission" && a.tool === "AskUserQuestion";
+
 const attentionKind = (a: Attention): EventKind | null => {
+  if (isQuestion(a)) return "question";
   switch (a.kind) {
     case "question":
       return "question";
@@ -99,12 +106,6 @@ const attentionKind = (a: Attention): EventKind | null => {
       return null;
   }
 };
-
-/** Claude Code's question to the person (AskUserQuestion), asked as a permission. Its
- *  answer is the option chosen, which Allow / Deny cannot carry, so the GUI refuses a
- *  suggestion for it: it is answered on its computer. */
-export const isQuestion = (a: Pick<Attention, "kind" | "tool">): boolean =>
-  a.kind === "permission" && a.tool === "AskUserQuestion";
 
 const EMOJI: Record<EventKind, string> = {
   needs_you: "🔔",
@@ -226,11 +227,14 @@ export function createPlugin(deps: Deps): Plugin {
           return;
         }
         const question = isQuestion(a);
-        const line = `${a.tool ?? a.kind}: ${a.message ?? title(session)}${question ? " · answer it on its computer" : ""}`;
+        // A question's message is only its tool's name; the session's title says more.
+        const line = question
+          ? `${a.tool}: ${a.message && a.message !== a.tool ? a.message : title(session)} · answer it on ${session.machine || "its computer"}`
+          : `${a.tool ?? a.kind}: ${a.message ?? title(session)}`;
         const text = formatMessage(EMOJI[kind], HEAD[kind], session.machine, line, api.sessions.url(key));
-        const answerable = a.answerable ?? !a.attentionId.startsWith("notif-");
-        // A question gets the plain message: an Allow / Deny tap could not answer it.
-        if (a.kind === "permission" && !question && answerable && settings.askOnPermission) ask(session, a, text);
+        // Allow / Deny cannot answer a question (its answer is the option chosen): plain message.
+        const answerable = !question && (a.answerable ?? !a.attentionId.startsWith("notif-"));
+        if (a.kind === "permission" && answerable && settings.askOnPermission) ask(session, a, text);
         else void send(text);
       };
 

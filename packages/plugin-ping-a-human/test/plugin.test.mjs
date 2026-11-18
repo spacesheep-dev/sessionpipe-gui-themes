@@ -243,7 +243,8 @@ describe("ping-a-human plugin", () => {
   it("Claude Code's question (AskUserQuestion) is a plain message, never Allow / Deny", async () => {
     const ch = fakeChannel();
     ch.setReply({ status: "answered", answer: "Allow", respondent: { id: "1", name: "Misha" } });
-    const ask = { ...permission("perm-q"), tool: "AskUserQuestion", message: "Which branch?" };
+    // sessionpipe's adapter sets the message of a question to its tool's name alone.
+    const ask = { ...permission("perm-q"), tool: "AskUserQuestion", message: "AskUserQuestion" };
     const s = session({ openAttentions: [ask] });
     const f = fakeApi({ botToken: TOKEN, chatId: "42", minSilenceS: 0 }, { [s.key]: s });
     const handle = await createPlugin({ createChannel: () => ch }).activate(f.api);
@@ -254,10 +255,19 @@ describe("ping-a-human plugin", () => {
     assert.equal(ch.sent[0].choices, undefined);
     assert.equal(
       ch.sent[0].message,
-      "🔔 Needs you · misha-air\nAskUserQuestion: Which branch? · answer it on its computer\nhttp://10.0.0.5:7373/s/claude-code/abc?k=key",
+      "❓ Question · misha-air\nAskUserQuestion: Fix the tests · answer it on misha-air\nhttp://10.0.0.5:7373/s/claude-code/abc?k=key",
     );
     assert.equal(f.suggestions.length, 0);
     handle.deactivate();
+
+    // It counts as a question for the events setting: off with "question" left out.
+    const ch3 = fakeChannel();
+    const f3 = fakeApi({ botToken: TOKEN, chatId: "42", minSilenceS: 0, events: ["needs_you"] }, { [s.key]: s });
+    const h3 = await createPlugin({ createChannel: () => ch3 }).activate(f3.api);
+    f3.emit({ kind: "session", session: s });
+    await tick();
+    assert.equal(ch3.sent.length, 0);
+    h3.deactivate();
 
     // Dry run says it would send, not that it would ask Allow / Deny.
     const f2 = fakeApi({ dryRun: true, minSilenceS: 0 }, { [s.key]: s });
