@@ -10,8 +10,8 @@ All notable changes to the packages in `sessionpipe-gui-themes`. The format foll
 
 - **`@sessionpipe-gui/theme-canvas`**: A question from Claude Code (AskUserQuestion) no
   longer offers Allow and Deny, neither of which can carry the answer: its window and its
-  menu offer no answer, and the window says to answer it on its computer, as the GUI does
-  since 0.8.4.
+  menu offer no answer, as in the GUI since 0.8.4, and on a desktop the window says to
+  answer it on its computer.
 
 ## [0.3.0] - 2026-10-26
 

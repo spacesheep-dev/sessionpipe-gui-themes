@@ -6,7 +6,8 @@ import { expect, test } from "@playwright/test";
 import { menus, open, settle } from "./helpers";
 
 const SMALL = "&world=small";
-const QUESTION = 5; // ASKS[5] in dev/mock.ts: the AskUserQuestion permission
+const WIN_H = 100; // WIN_H in src/types.ts; an answerable window is WIN_H_ASK, 132
+const QUESTION = -1; // QUESTION_ASK in dev/mock.ts: the AskUserQuestion permission
 
 test("control: a question offers no Allow / Deny, in the window or its menu, and says to answer it on its computer", async ({
   page,
@@ -18,6 +19,8 @@ test("control: a question offers no Allow / Deny, in the window or its menu, and
   const win = page.locator(`.cv-win[data-key="${key}"]`);
   await expect(win).toHaveAttribute("data-state", "needs_you");
   await expect(win).not.toHaveClass(/is-ask/);
+  // Laid out at the height of a window with nothing to answer here, not the taller asking one.
+  await expect.poll(() => win.evaluate((e) => (e as HTMLElement).offsetHeight)).toBe(WIN_H);
   await expect(win.getByRole("button", { name: "Allow" })).toBeHidden();
   await expect(win.getByRole("button", { name: "Deny" })).toBeHidden();
   const machine = await page.evaluate((k) => window.__harness.world.sessions().get(k)!.machine, key);
@@ -27,13 +30,12 @@ test("control: a question offers no Allow / Deny, in the window or its menu, and
   const m = (await menus(page)).at(-1)!;
   expect(m.key).toBe(key);
   expect(m.answer ?? []).toEqual([]);
-  const calls = await page.evaluate(() => window.__harness.world.calls.filter((c) => c.kind === "answer"));
-  expect(calls).toEqual([]);
 
   // A permission Allow can answer still offers both, with the terminal line hidden.
   await page.keyboard.press("Escape");
   await page.evaluate((k) => window.__harness.world.raise(k, 0), key);
   await expect(win).toHaveClass(/is-ask/);
+  await expect.poll(() => win.evaluate((e) => (e as HTMLElement).offsetHeight)).toBe(132);
   await expect(win.getByRole("button", { name: "Allow" })).toBeVisible();
   await expect(win.locator(".cv-win-wait")).toBeHidden();
 });

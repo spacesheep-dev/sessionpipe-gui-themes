@@ -52,9 +52,12 @@ const ASKS: { kind: Attention["kind"]; tool?: string; message: string }[] = [
   { kind: "question", message: "Should the retry cap be five attempts or unlimited with a ceiling?" },
   { kind: "error", message: "ENOSPC: no space left on device while writing the outbox" },
   { kind: "elicitation", message: "Which port should the dev server use?" },
-  // Claude Code's question, asked as a permission: answered on its computer, never by Allow.
-  { kind: "permission", tool: "AskUserQuestion", message: "Cap the retries at five attempts, or no cap?" },
 ];
+/** Claude Code's question, asked as a permission whose message is the tool's name alone (the
+ *  daemon describes no field of its input): answered on its computer, never by Allow. Kept out
+ *  of ASKS, whose length the live world's every-ninth-tick rotation needs coprime with 9. */
+export const QUESTION_ASK = -1;
+const QUESTION = { kind: "permission", tool: "AskUserQuestion", message: "AskUserQuestion" } as const;
 const TITLES = [
   "Refactor the receiver's flush path",
   "Theme loader: manifest and routes",
@@ -651,7 +654,7 @@ export class World {
   raise(key: SessionKey, i = 0) {
     const r = this.recs.get(key);
     if (!r || r.s.state === "done") return;
-    const ask = ASKS[i % ASKS.length]!;
+    const ask = i === QUESTION_ASK ? QUESTION : ASKS[i % ASKS.length]!;
     const att: Attention = {
       attentionId: `att_${++this.n}`,
       kind: ask.kind,
