@@ -255,7 +255,7 @@ describe("ping-a-human plugin", () => {
     assert.equal(ch.sent[0].choices, undefined);
     assert.equal(
       ch.sent[0].message,
-      "❓ Question · misha-air\nAskUserQuestion: Fix the tests · answer it on misha-air\nhttp://10.0.0.5:7373/s/claude-code/abc?k=key",
+      "❓ Question · misha-air\nFix the tests · answer it on its computer\nhttp://10.0.0.5:7373/s/claude-code/abc?k=key",
     );
     assert.equal(f.suggestions.length, 0);
     handle.deactivate();

@@ -227,9 +227,10 @@ export function createPlugin(deps: Deps): Plugin {
           return;
         }
         const question = isQuestion(a);
-        // A question's message is only its tool's name; the session's title says more.
+        // A question's message is only its tool's name; the session's title says more. The
+        // header already names the machine, so the line does not repeat it.
         const line = question
-          ? `${a.tool}: ${a.message && a.message !== a.tool ? a.message : title(session)} · answer it on ${session.machine || "its computer"}`
+          ? `${a.message && a.message !== a.tool ? a.message : title(session)} · answer it on its computer`
           : `${a.tool ?? a.kind}: ${a.message ?? title(session)}`;
         const text = formatMessage(EMOJI[kind], HEAD[kind], session.machine, line, api.sessions.url(key));
         // Allow / Deny cannot answer a question (its answer is the option chosen): plain message.
