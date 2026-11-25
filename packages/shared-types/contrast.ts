@@ -64,26 +64,26 @@ const GROUNDS = ["--bg", "--bg-2"] as const;
 
 /** The stock values of the six tokens the check reads (tokens.css), so a skin that sets
  *  only some of them is measured against what the page fills in for the rest. Kept by
- *  hand beside tokens.css. */
+ *  hand beside tokens.css; shared/skins-builtin.test.ts holds them equal. */
 export const STOCK_TEXT_TOKENS: Record<
   "dark" | "light",
   Record<(typeof GROUNDS)[number] | "--fg" | "--fg-2" | "--fg-3" | "--fg-4", string>
 > = {
   light: {
-    "--bg": "oklch(0.985 0.004 85)",
-    "--bg-2": "oklch(0.998 0.002 85)",
-    "--fg": "oklch(0.22 0.014 265)",
-    "--fg-2": "oklch(0.42 0.016 265)",
-    "--fg-3": "oklch(0.5 0.014 265)",
-    "--fg-4": "oklch(0.64 0.01 265)",
+    "--bg": "#ffffff",
+    "--bg-2": "#ffffff",
+    "--fg": "#141414",
+    "--fg-2": "#454545",
+    "--fg-3": "#5c5c5a",
+    "--fg-4": "#858581",
   },
   dark: {
-    "--bg": "oklch(0.165 0.008 255)",
-    "--bg-2": "oklch(0.195 0.009 255)",
-    "--fg": "oklch(0.92 0.006 85)",
-    "--fg-2": "oklch(0.8 0.008 85)",
-    "--fg-3": "oklch(0.66 0.008 85)",
-    "--fg-4": "oklch(0.5 0.008 255)",
+    "--bg": "#141414",
+    "--bg-2": "#1c1c1b",
+    "--fg": "#f5f5f3",
+    "--fg-2": "#c4c4c0",
+    "--fg-3": "#9a9a96",
+    "--fg-4": "#6e6e6a",
   },
 };
 
