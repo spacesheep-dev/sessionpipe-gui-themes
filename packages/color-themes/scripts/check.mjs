@@ -105,24 +105,44 @@ const PAIRS = [
 const SURFACE_MAX_CHROMA = (id) => (/-vivid(-|$)/.test(id) ? 0.08 : 0.03);
 
 let failed = false;
+// A file that is not JSON is a failure, reported as the GUI's readColorThemes reports it.
+function readJson(file, label) {
+  try {
+    return JSON.parse(readFileSync(file, "utf8"));
+  } catch (e) {
+    console.log(`${label}: INVALID: not JSON: ${e.message}`);
+    failed = true;
+    return undefined;
+  }
+}
+const isObject = (v) => !!v && typeof v === "object" && !Array.isArray(v);
 // A skin manifest (skin-authoring.md in the GUI repo) carries one token set per scheme;
 // each is checked like a color theme of that scheme. Style tokens are left out of the check.
 const STYLE = ["--font-ui", "--font-mono", "--radius", "--radius-sm", "--hairline"];
 const skinArg = process.argv.indexOf("--skin");
 const inputs = [];
 if (skinArg >= 0) {
-  const file = resolve(process.argv[skinArg + 1]);
-  const m = JSON.parse(readFileSync(file, "utf8"));
-  const sets = m.scheme === "both" ? m.tokens : { [m.scheme]: m.tokens };
-  for (const [scheme, tokens] of Object.entries(sets)) {
-    const t = Object.fromEntries(Object.entries(tokens).filter(([k]) => !STYLE.includes(k)));
-    inputs.push([`${m.id} (${scheme})`, { id: m.id, name: m.name, scheme, tokens: t }]);
+  const label = process.argv[skinArg + 1];
+  const m = readJson(resolve(label), label);
+  // A "both" skin carries both sets; the GUI's validateSkinManifest refuses one without.
+  if (m && m.scheme === "both" && !(isObject(m.tokens) && isObject(m.tokens.dark) && isObject(m.tokens.light))) {
+    console.log(`${label}: INVALID: scheme "both" needs tokens.dark and tokens.light`);
+    failed = true;
+  } else if (m) {
+    const sets = m.scheme === "both" ? m.tokens : { [m.scheme]: m.tokens };
+    for (const [scheme, tokens] of Object.entries(sets)) {
+      const t = isObject(tokens)
+        ? Object.fromEntries(Object.entries(tokens).filter(([k]) => !STYLE.includes(k)))
+        : tokens;
+      inputs.push([`${m.id} (${scheme})`, { id: m.id, name: m.name, scheme, tokens: t }]);
+    }
   }
 } else {
   for (const f of readdirSync(pkg)
     .filter((f) => f.endsWith(".json") && f !== "package.json")
     .sort()) {
-    inputs.push([f, JSON.parse(readFileSync(join(pkg, f), "utf8"))]);
+    const doc = readJson(join(pkg, f), f);
+    if (doc !== undefined) inputs.push([f, doc]);
   }
 }
 for (const [f, doc] of inputs) {
