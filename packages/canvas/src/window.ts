@@ -211,7 +211,12 @@ export class WinView {
       s.lastUser,
       s.counts.toolErrors,
       av ? `${av.ok}:${av.reason ?? ""}` : "-",
-      acts.map((a) => `${a.id}:${a.outcome ?? ""}:${a.reply?.length ?? ""}`).join(","),
+      acts
+        .map((a) => {
+          const u = unheardOf(a);
+          return [a.id, a.outcome, a.code, a.detail, u?.state, u?.reason, u?.status, a.reply?.length].join("\u0002");
+        })
+        .join("\u0003"),
       ctx.view,
       ctx.label?.color,
       ctx.label?.name,
@@ -339,7 +344,10 @@ export class WinView {
           el("span", "cv-act-kind", KIND_LABEL[a.kind] ?? a.kind),
           el("span", "cv-act-text", a.text ? oneLine(a.text, 80) : ""),
         );
-        row.append(head, el("div", "cv-act-state", outcomeWords(a, machine)));
+        const words = outcomeWords(a, machine);
+        const said = el("div", "cv-act-state", words);
+        said.title = words; // the line is cut to one row; the whole of it on hover
+        row.append(head, said);
         if (a.reply) row.append(el("div", "cv-act-reply", tail(a.reply, 200)));
         return row;
       }),
@@ -508,11 +516,58 @@ function tail(s: string, max: number): string {
 
 /** The step a carried message is at, the way the Session page reads it. */
 function shownState(a: ControlActivity): string {
+  const unheard = unheardOf(a);
+  // Known not to have been sent: an error, as the GUI says it. Otherwise nobody knows yet.
+  if (unheard) return unheard.state === "unsent" ? "failed" : "unheard";
+  // Sent through an account the app no longer follows: not known to have failed.
+  if (a.outcome === "failed" && a.code === "untracked") return "untracked";
   if (a.outcome === "taken" && a.reply !== undefined) return "progress";
   return a.outcome ?? "queued";
 }
 
+/** A send the GUI got no answer for (its account/unheard.ts), newer than this repo's copy of the
+ *  wire types: `asking` while the app is finding out, `unknown` once nobody can say, `unsent`
+ *  once it is known that no job was made. */
+type Unheard = { state?: string; reason?: string; status?: number };
+function unheardOf(a: ControlActivity): Unheard | undefined {
+  const u = (a as { unheard?: unknown }).unheard;
+  return u && typeof u === "object" ? (u as Unheard) : undefined;
+}
+
+/** The GUI's shared/reason.ts asSentence: a full stop unless the words already end in one. */
+function asSentence(s: string): string {
+  return /[\p{L}\p{N}]$/u.test(s) ? `${s}.` : s;
+}
+
+/** The GUI's REFUSAL_WORDS for the two codes its own account code settles an unsent row with
+ *  (account/unheard.ts `too_old`, account/backend.ts `confirm_required`). */
+const UNSENT_REFUSALS: Record<string, string> = {
+  too_old: "signed too long ago; send it again",
+  confirm_required: "held for you to confirm; send it from the session's page to confirm it",
+};
+
+/** Why a send was known not to have been sent, as the GUI's sendErrorWords says it: by code,
+ *  then by the status spacesheep answered with (502 when it gave none), then its reason. */
+function unsentWhy(code: string | undefined, status: number | undefined, why: string | undefined): string {
+  if (code === "relay_files") return why || "a file can't be sent this way";
+  if ((status ?? 502) === 422 && code) return UNSENT_REFUSALS[code] ?? code.replace(/_/g, " ");
+  // Unheard rows come only from the GUI signed in to a spacesheep account, so its account words.
+  if (code === "spacesheep_unauthorized")
+    return "spacesheep no longer takes this app's key: connect again in Settings → App";
+  if (status === 404) return "this machine is no longer paired here";
+  if (status === 401) return "this page lost its key; reload it from the terminal's link";
+  return why || "spacesheep did not take it";
+}
+
 function outcomeWords(a: ControlActivity, machine: string): string {
+  const unheard = unheardOf(a);
+  const why = a.detail?.trim() || unheard?.reason?.trim();
+  // Known that no job was made: the GUI's sendErrorWords (web/src/control/words.ts), in this
+  // strip's casing.
+  if (unheard?.state === "unsent") return `Not sent · ${unsentWhy(a.code, unheard.status, why)}`;
+  // Nobody heard spacesheep's answer: it may have been sent, never "no word from the machine".
+  if (unheard)
+    return `May have been sent · ${asSentence(why || "this app got no answer")} Look at the session before sending it again`;
   switch (shownState(a)) {
     case "queued":
       return `Queued · waiting for ${machine}`;
@@ -526,8 +581,16 @@ function outcomeWords(a: ControlActivity, machine: string): string {
       return `Expired · ${a.detail ?? "nobody took it in time"}`;
     case "unsupported":
       return `Unsupported on this harness`;
+    case "untracked":
+      // A send through spacesheep that the app can no longer follow: not known to have failed.
+      return "Not followed · sent through an account that's no longer connected";
     case "failed":
       return `Failed · ${a.detail ?? "the path errored"}`;
+    case "unconfirmed":
+      // The app's own end for a send spacesheep carried, never a machine's ack. With the code
+      // `no_job` spacesheep named no job, and it is not known that a machine took it.
+      if (a.code === "no_job") return "Not followed · spacesheep didn't say which job it is";
+      return `No word · ${machine} took it and said nothing more`;
     case "refused":
       return `Refused · ${a.code ? a.code.replace(/_/g, " ") : (a.detail ?? "")}`;
     default:
