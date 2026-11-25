@@ -52,7 +52,8 @@ sessionpipe-gui theme link /path/to/sessionpipe-gui-themes/packages/office
 ## How it uses the host's React
 
 The theme is written in TSX but `dist/index.js` carries no React: it draws with the host's
-(`api.react`, React 18), so the bundle is ~75 KB with source maps off to the side. The trick is
+(`api.react`, React 18), so the bundle is 82 KB (46 KB minified, as it is published) with
+source maps off to the side. The trick is
 three small shims in `shims/`, which `scripts/build.mjs` substitutes for `react`,
 `react/jsx-runtime` and `react-dom/client` at bundle time:
 

@@ -5,10 +5,9 @@ The [Spacesheep color themes](../color-themes) as one **skin** for the
 one entry in the appearance popover follows the system / dark / light setting with the
 dark and light token sets from `spacesheep-dark.json` and `spacesheep-light.json`.
 
-Since the GUI ships this palette **built in as its default skin** (id `spacesheep`), you
-need this package only on a GUI older than that, or as the starting point for a palette
-of your own (copy the folder, change the `id`). Installing it over a GUI that has the
-built-in is refused: the id is taken.
+The GUI's default skin is **sessionpipe**; this one (id `spacesheep`) installs like any
+skin, or is the starting point for a palette of your own (copy the folder, change the
+`id`).
 
 ```sh
 sessionpipe-gui skin add  @sessionpipe-gui/skin-spacesheep   # from npm, under <stateDir>/skins/spacesheep
